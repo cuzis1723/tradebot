@@ -1,0 +1,31 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - claude/pedantic-heisenberg
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /home/tradebot/project/tradebot
+            git pull origin claude/pedantic-heisenberg
+            npm install --production=false
+            npm run build
+            pm2 restart tradebot || pm2 start ecosystem.config.cjs
+
+            # Telegram 배포 알림 (.env에서 토큰 읽기)
+            export $(grep -E '^TG_BOT_TOKEN=|^TG_CHAT_ID=' .env | xargs)
+            DEPLOY_MSG="✅ 배포 완료!%0A%0A📦 Branch: claude/pedantic-heisenberg%0A🕐 $(date '+%Y-%m-%d %H:%M:%S')%0A📝 $(git log -1 --pretty=format:'%s')"
+            curl -s "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT_ID}" \
+              -d "text=${DEPLOY_MSG}" > /dev/null 2>&1 || true
