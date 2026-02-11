@@ -1,0 +1,38 @@
+{
+  "name": "tradebot",
+  "version": "0.1.0",
+  "description": "Automated crypto trading bot system - Grid, Funding Arb, Momentum, Token Sniping",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "lint": "eslint src/",
+    "check-balances": "tsx scripts/check-balances.ts"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "better-sqlite3": "^12.6.2",
+    "decimal.js": "^10.6.0",
+    "dotenv": "^17.2.4",
+    "grammy": "^1.40.0",
+    "hyperliquid": "^1.7.7",
+    "pino": "^10.3.1",
+    "technicalindicators": "^3.1.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.3",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

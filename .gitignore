@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.env
+*.db
+*.sqlite
+*.sqlite3
+data/
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug
+npm-debug.log*
