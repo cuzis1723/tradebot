@@ -6,29 +6,40 @@
 
 ## 프로젝트 방향
 
-### 핵심 전략
-**안정적 복리 수익(Foundation) + 성장 전략(Growth) + 비대칭 배팅(Moonshot)** 3-tier 결합.
+### 핵심 철학
+**봇의 존재 이유: 프로토콜이 못하는 걸 해야 한다.**
 
-- **Foundation (60%)**: Grid Bot + Funding Rate Arb → 안정적 수익 기반
-- **Growth (30%)**: Momentum + Discretionary → 트렌드 추종 + LLM 기반 의사결정
-- **Moonshot (10%)**: Token Sniping on Solana → 비대칭 수익 (고위험/고수익)
+- 안정적 수익만 원하면 HLP/Theo에 예치하면 됨 → 봇을 만들 이유 없음
+- 펀딩레이트 수익도 Liminal, Theo 등 기존 프로토콜이 더 잘함
+- **봇이 잘하는 것**: 시장 상황 판단, 타이밍, 레버리지 조절, 공격적 진입/퇴출
+- **핵심 가치**: LLM이 24/7 시장을 감시하고, 높은 확률의 기회에만 집중적으로 진입
 
-### 운영 방식
-- **자동 전략** (Grid, Funding Arb, Momentum): 24/7 무인 운영
-- **반자동 전략** (Discretionary): 봇이 기회 제안 → Telegram으로 사용자 승인
-- **테스트넷 우선**: 메인넷 전환 전 충분한 검증
+### 전략 구성 (v2 - 재편)
+
+| 전략 | 역할 | 자본 | 모드 |
+|------|------|------|------|
+| **Discretionary (Core)** | LLM 기반 공격적 트레이딩 | 60% ($600) | 반자동 → 조건부 자동 |
+| **Momentum (Support)** | 트렌드 확인 + 자동 진입 | 30% ($300) | Auto |
+| **Grid (Idle mode)** | 횡보장에서만 가동 | 10% ($100) | Auto (조건부) |
+| ~~Funding Arb~~ | ~~제거 — HLP/Theo가 더 잘함~~ | - | - |
+| ~~Token Sniping~~ | ~~보류 — MEV 경쟁 + 자본 부족~~ | - | - |
+
+### 목표
+- 월 15-30% 수익률 (레버리지 활용, 고확률 트레이드 선별)
+- 최대 드로다운 20% 제한
+- 월 10~20회 트레이드 (질 > 양)
 
 ---
 
-## Strategy Overview
+## Strategy Overview (현재 코드 상태)
 
-| Strategy | Tier | Capital | Status | Mode |
-|----------|------|---------|--------|------|
-| Grid Trading | Foundation | 20% | ✅ Complete | Auto |
-| Funding Rate Arb | Foundation | 40% | ✅ Complete | Auto |
-| Momentum Trading | Growth | 30% | ✅ Complete | Auto |
-| Discretionary Trading | Growth | 30% | ✅ Complete | Semi-Auto (Telegram) |
-| Token Sniping (Solana) | Moonshot | 10% | ❌ Pending | Auto |
+| Strategy | Status | 비고 |
+|----------|--------|------|
+| Grid Trading | ✅ Implemented | v2에서 횡보장 전용으로 전환 예정 |
+| Funding Rate Arb | ✅ Implemented | v2에서 제거 예정 (프로토콜 대체) |
+| Momentum Trading | ✅ Implemented | 유지, 파라미터 최적화 예정 |
+| Discretionary Trading | ✅ Implemented | v2에서 Core로 대폭 고도화 예정 |
+| Token Sniping (Solana) | ❌ Not Started | 보류 (자본 $10k+ 시 재고) |
 
 ---
 
@@ -75,19 +86,141 @@
 
 ## 남은 작업 (Todo)
 
-### Phase 4: Token Sniping on Solana
-- [ ] Solana 지갑 연동 (@solana/web3.js v1.98.x)
-- [ ] PumpFun 신규 토큰 감지 (Yellowstone gRPC)
-- [ ] Raydium 신규 풀 감지
-- [ ] 안전 검사 (mint/freeze authority, 유동성, 허니팟)
-- [ ] Jupiter 스왑 실행 (@jup-ag/api v6)
-- [ ] Jito 번들 전송 (MEV 보호)
+### v2 전략 재편 (다음 구현)
+- [ ] Discretionary v2: 스코어링 엔진 + 스마트 LLM 트리거 (아래 설계 참고)
+- [ ] Funding Arb 전략 비활성화 (엔진에서 제거)
+- [ ] Grid 전략을 횡보장 전용으로 전환 (시장 상태 판단 로직)
+- [ ] Momentum 파라미터 최적화
+- [ ] 메인넷 전환
 
 ### 향후 개선
-- [ ] 메인넷 전환 (충분한 테스트 후)
-- [ ] Sharpe Ratio 계산 구현
 - [ ] 전략별 상세 백테스트
 - [ ] 모니터링 대시보드
+- [ ] 연속 손실 시 자동 포지션 축소
+
+---
+
+## [설계] Discretionary v2: LLM 스마트 트리거 알고리즘
+
+### 원칙
+- **코드가 감시, LLM이 판단** — 정량적 필터는 코드, 정성적 판단은 LLM
+- **노이즈 제거** — "평소와 다른" 움직임만 포착
+- **비용 제어** — 하루 최대 12회 LLM 호출 (월 ~$2-3 Haiku 기준)
+
+### 아키텍처
+
+```
+[5분 주기 데이터 수집] ← 코드, 비용 0
+        ↓
+[1차: 개별 지표 이상 감지] ← 코드, 비용 0
+        ↓
+[2차: 복합 스코어 계산] ← 코드, 비용 0
+        ↓
+  스코어 >= 임계값?
+    NO → 대기
+    YES ↓
+[3차: 쿨다운 체크]
+        ↓
+  쿨다운 통과?
+    NO → 대기
+    YES ↓
+[LLM 호출] → 트레이드 제안 or "기회 아님"
+        ↓
+[Telegram 알림 → 사용자 승인/자동 진입]
+```
+
+### 1차: 개별 지표 이상 감지 (5분 주기, 코드 기반)
+
+| 카테고리 | 지표 | 트리거 조건 | 점수 |
+|----------|------|------------|------|
+| **가격 급변** | 1h 변동률 | \|변동\| > 2.5% | +3 |
+| | 4h 변동률 | \|변동\| > 5% | +3 |
+| | 15m 캔들 크기 | > 2x ATR(14) | +2 |
+| **모멘텀** | RSI(14) | < 25 또는 > 75 | +3 |
+| | RSI 다이버전스 | 가격 신고/저 vs RSI 역방향 | +4 |
+| | EMA(9/21) 크로스 | 1h 내 크로스오버 발생 | +3 |
+| **변동성** | ATR 급등 | 현재 ATR > 1.5x 20봉 평균 ATR | +2 |
+| | 볼린저 밴드 돌파 | 종가가 2σ 밖으로 돌파 | +2 |
+| **볼륨** | 거래량 급증 | 1h 거래량 > 3x 24h 평균 | +3 |
+| **시장 구조** | 지지/저항 도달 | 주요 S/R 레벨 ±0.5% 이내 | +2 |
+| | OI 급변 | 1h OI 변화 > 5% | +2 |
+| | 펀딩레이트 극단 | \|funding\| > 0.05%/h | +1 |
+| **크로스 심볼** | BTC 급변 시 알트 | BTC 3%+ 이동 + 알트 미반영 | +3 |
+
+### 2차: 복합 스코어 & 임계값
+
+```
+총 점수 = Σ(트리거된 지표 점수)
+
+점수별 액션:
+  0~4점  → 무시 (평범한 시장)
+  5~7점  → 관심 (로그 기록 + Telegram 경고)
+  8~10점 → LLM 호출 (일반 분석)
+  11점+  → LLM 긴급 호출 (높은 확신도 요구)
+```
+
+**복합 보너스:**
+- 같은 방향 시그널 3개+ 동시 발생 → +2점
+- 멀티 타임프레임 일치 (1h + 4h 같은 방향) → +2점
+- 2개+ 심볼에서 동시 시그널 → +1점
+
+### 3차: 쿨다운 규칙
+
+| 규칙 | 값 | 이유 |
+|------|-----|------|
+| 심볼별 쿨다운 | 2시간 | 같은 심볼 연속 분석 방지 |
+| 글로벌 쿨다운 | 30분 | LLM 호출 간 최소 간격 |
+| 일일 최대 호출 | 12회 | 비용 제어 |
+| 연속 손실 후 | 4시간 | 2연속 손실 트레이드 후 냉각 |
+| 관심(5~7점) 알림 | 1시간 | Telegram 스팸 방지 |
+
+### LLM 호출 시 전달 컨텍스트
+
+```
+[트리거 요약]
+- 트리거 점수: 9/15
+- 트리거된 지표: RSI(14)=22.3 (극저), EMA 크로스 (골든), 거래량 3.2x 급증
+- 심볼: ETH-PERP
+- 방향 편향: LONG (3/3 지표 일치)
+
+[기술적 데이터]
+- 현재가, 1h/4h/24h 변동, RSI, EMA, ATR
+- 볼린저 밴드, 지지/저항선
+- OI, 펀딩레이트, 거래량 (vs 24h 평균)
+
+[포지션 상태]
+- 현재 오픈 포지션, 가용 자본
+- 오늘 PnL, 최근 5거래 승률
+
+[요청]
+진입 가치 판단 → 방향/레버리지/진입가/SL/TP를 JSON 제안
+또는 "기회 아님" + 이유
+```
+
+### 예상 비용
+
+| 시장 상태 | 일일 LLM 호출 | 월 비용 (Haiku) |
+|----------|--------------|----------------|
+| 횡보장 | 2~4회 | ~$1 |
+| 보통 | 5~8회 | ~$2 |
+| 급등/급락 | 8~12회 | ~$3 |
+
+### 구현 파일 매핑
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `src/strategies/discretionary/scorer.ts` | **신규** - 스코어링 엔진 |
+| `src/strategies/discretionary/analyzer.ts` | 확장 - 볼린저, OI, 볼륨 지표 추가 |
+| `src/strategies/discretionary/index.ts` | 리팩토링 - 15분 고정 → 스코어 트리거 |
+| `src/strategies/discretionary/llm-advisor.ts` | 유지 - 호출 빈도만 변경 |
+| `src/core/types.ts` | 타입 추가 - TriggerScore, CooldownState |
+
+### 전략 제거/비활성화 시 변경 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `src/index.ts` | Funding Arb 등록 제거 |
+| `src/config/strategies.ts` | 자본 배분 비율 변경 |
 
 ---
 
