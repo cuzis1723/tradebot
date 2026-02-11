@@ -145,6 +145,7 @@ export class DiscretionaryStrategy extends Strategy {
             const result = await this.advisor.analyzeMarketWithTrigger(
               this.latestSnapshots,
               score,
+              this.positions,
             );
 
             if (result.action === 'propose_trade' && result.proposal) {
