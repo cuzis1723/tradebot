@@ -233,6 +233,29 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await sendLongMessage(ctx, answer);
   });
 
+  // === Scoring Commands (v2) ===
+
+  bot.command('score', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!discretionaryRef) {
+      await ctx.reply('Discretionary strategy not active.');
+      return;
+    }
+    await ctx.reply('Scanning markets...');
+    const scoreReport = await discretionaryRef.handleScoreRequest();
+    await sendLongMessage(ctx, scoreReport);
+  });
+
+  bot.command('cooldown', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!discretionaryRef) {
+      await ctx.reply('Discretionary strategy not active.');
+      return;
+    }
+    const status = discretionaryRef.handleCooldownRequest();
+    await ctx.reply(status, { parse_mode: 'HTML' });
+  });
+
   // === Help ===
 
   bot.command('help', async (ctx: Context) => {
@@ -247,6 +270,8 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/stop - Stop all\n'
       + '\n<b>Discretionary Trading:</b>\n'
       + '/market - Market analysis\n'
+      + '/score - Trigger score scan\n'
+      + '/cooldown - LLM cooldown status\n'
       + '/idea &lt;text&gt; - Evaluate trade idea\n'
       + '/approve &lt;id&gt; - Approve proposal\n'
       + '/modify &lt;id&gt; size=N sl=N tp=N\n'

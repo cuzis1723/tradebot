@@ -1,53 +1,93 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config/index.js';
 import { createChildLogger } from '../../monitoring/logger.js';
-import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition } from '../../core/types.js';
+import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore } from '../../core/types.js';
 import { randomUUID } from 'crypto';
 
 const log = createChildLogger('llm-advisor');
 
-const SYSTEM_PROMPT = `You are a crypto trading analyst assistant for a perpetual futures trading bot on Hyperliquid.
+const SYSTEM_PROMPT = `You are the core decision engine of an automated crypto perpetual futures trading bot on Hyperliquid.
 
-Your role:
-- Analyze market data and identify trading opportunities
-- Provide clear, concise trade proposals with rationale
-- Focus on technical analysis: price action, trend, momentum, support/resistance, RSI, EMA crossovers
-- Be conservative with position sizing and always recommend stop losses
-- Consider risk/reward ratio (minimum 1.5:1)
+## Context
+- Capital: ~$600 allocated to this strategy (60% of $1,000 total portfolio)
+- Target: 15-30% monthly return, max 20% drawdown
+- Style: Aggressive on high-probability setups, patient otherwise
+- Frequency: 10-20 trades/month (quality over quantity)
+- You are called ONLY when a code-based scoring system detects unusual market activity
+  (score >= 8/33 from 13 technical indicators). Your job is to validate whether the
+  detected signal is a real opportunity or noise.
 
-When proposing a trade, respond ONLY with valid JSON in this format:
+## Your Role
+1. Evaluate the trigger signals provided — are they converging into a real setup?
+2. Consider market structure: trend, S/R levels, volume confirmation, funding bias
+3. If a genuine opportunity exists, propose a specific trade with exact levels
+4. If the signal is noise or timing is wrong, clearly say "no_trade" with reasoning
+5. Be decisive. Vague "maybe" answers waste API calls. Either propose or reject.
+
+## Scoring System (for reference)
+You are called when the bot's code-based scorer detects anomalies:
+- Price: 1h move >2.5%, 4h move >5%
+- Momentum: RSI <25 or >75, EMA(9/21) crossover
+- Volatility: ATR spike >1.5x avg, Bollinger Band breakout
+- Volume: 1h volume >3x 24h average
+- Structure: Near S/R levels, OI rapid change >5%, extreme funding
+- Cross: BTC 3%+ move with alt lagging
+The trigger score and individual flags are included in the prompt.
+
+## Decision Framework
+- Score 8-10: Standard analysis. Propose only if setup is clean.
+- Score 11+: Urgent — indicators strongly aligned. Be more aggressive with sizing.
+- Multi-signal alignment (same direction): Higher confidence warranted.
+- Conflicting signals (mixed direction): Usually means no clear trade.
+
+## Confidence Levels
+- "high": 3+ same-direction signals, clear trend, volume confirms, R:R >= 2:1
+  → Size: 15-25% of capital, Leverage: 4-5x
+- "medium": 2 aligned signals, decent setup but some uncertainty
+  → Size: 10-15% of capital, Leverage: 3x
+- "low": Signal detected but setup is marginal, counter-trend, or unclear
+  → Size: 5-10% of capital, Leverage: 2-3x
+
+## Risk Rules (STRICT)
+- Max leverage: 5x
+- Stop loss: REQUIRED on every trade
+  - High leverage (4-5x): SL within 2-3% of entry
+  - Medium leverage (3x): SL within 3-5% of entry
+  - Low leverage (2x): SL within 5-8% of entry
+- Take profit: Minimum 1.5:1 R:R ratio, prefer 2:1+
+- size_pct: Percentage of allocated capital (max 25% per trade)
+- Never go all-in. Always preserve capital for the next opportunity.
+- If funding rate is extreme (>0.05%/h), factor it into direction bias:
+  Very positive funding → bias short. Very negative → bias long.
+
+## Response Format
+ALWAYS respond with valid JSON only. No markdown, no explanations outside JSON.
+
+For a trade proposal:
 {
   "action": "propose_trade",
   "symbol": "ETH-PERP",
-  "side": "buy" or "sell",
+  "side": "buy",
   "entry_price": 2500.00,
   "stop_loss": 2450.00,
   "take_profit": 2600.00,
-  "size_pct": 10,
+  "size_pct": 15,
   "leverage": 3,
-  "confidence": "low" | "medium" | "high",
-  "rationale": "Brief explanation of the trade logic"
+  "confidence": "high",
+  "rationale": "RSI oversold (22) with EMA golden cross + volume surge 3.5x. Strong bounce setup at support $2480. R:R 2:1."
 }
 
-If no good opportunity exists, respond with:
+For no trade:
 {
   "action": "no_trade",
-  "rationale": "Brief explanation of why there's no good setup"
+  "rationale": "ATR spike detected but signals are mixed — RSI neutral, no clear S/R test, volume fading. Likely noise from a single large order."
 }
 
-When answering a user question, respond with:
+For answering user questions:
 {
   "action": "analysis",
   "content": "Your analysis text here"
-}
-
-Rules:
-- Never recommend more than 5x leverage
-- Stop loss must be within 5% of entry for high leverage, 10% for low leverage
-- Take profit should give at least 1.5:1 risk/reward
-- size_pct is percentage of allocated strategy capital (max 30%)
-- Be honest about uncertainty. If the setup is unclear, say so
-- Consider funding rate: if very positive, bias toward shorts; if negative, bias toward longs`;
+}`;
 
 export class LLMAdvisor {
   private client: Anthropic | null = null;
@@ -114,6 +154,98 @@ export class LLMAdvisor {
     }));
 
     const prompt = `Current market data:\n${JSON.stringify(marketData, null, 2)}\n\nAnalyze these markets and propose a trade if there's a good opportunity. If not, explain why.`;
+
+    const response = await this.chat(prompt);
+    return this.parseResponse(response);
+  }
+
+  async analyzeMarketWithTrigger(
+    snapshots: MarketSnapshot[],
+    triggerScore: TriggerScore,
+    openPositions?: ActiveDiscretionaryPosition[],
+  ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
+    const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
+    if (!targetSnapshot) {
+      return { action: 'no_trade', content: `No snapshot data for ${triggerScore.symbol}` };
+    }
+
+    const marketData = snapshots.map(s => ({
+      symbol: s.symbol,
+      price: s.price,
+      change_1h: `${s.change1h.toFixed(2)}%`,
+      change_4h: `${s.change4h.toFixed(2)}%`,
+      change_24h: `${s.change24h.toFixed(2)}%`,
+      rsi14: s.rsi14.toFixed(1),
+      ema9: s.ema9.toFixed(2),
+      ema21: s.ema21.toFixed(2),
+      atr14: s.atr14.toFixed(2),
+      support: s.support.toFixed(2),
+      resistance: s.resistance.toFixed(2),
+      funding_rate_pct_hr: (s.fundingRate * 100).toFixed(4),
+      trend: s.trend,
+      volume_24h_usd: s.volume24h.toFixed(0),
+      ...(s.bollingerUpper !== undefined && { bb_upper: s.bollingerUpper.toFixed(2) }),
+      ...(s.bollingerLower !== undefined && { bb_lower: s.bollingerLower.toFixed(2) }),
+      ...(s.bollingerWidth !== undefined && { bb_width_pct: `${s.bollingerWidth.toFixed(2)}%` }),
+      ...(s.volumeRatio !== undefined && { volume_ratio: `${s.volumeRatio.toFixed(2)}x` }),
+      ...(s.oiChange1h !== undefined && { oi_change_1h: `${s.oiChange1h.toFixed(2)}%` }),
+      ...(s.atrAvg20 !== undefined && { atr_vs_avg: `${(s.atr14 / s.atrAvg20).toFixed(2)}x` }),
+    }));
+
+    const triggerSummary = {
+      symbol: triggerScore.symbol,
+      total_score: triggerScore.totalScore,
+      direction_bias: triggerScore.directionBias,
+      bonus: triggerScore.bonusScore,
+      triggers: triggerScore.flags.map(f => ({
+        name: f.name,
+        category: f.category,
+        score: f.score,
+        direction: f.direction,
+        detail: f.detail,
+      })),
+    };
+
+    // Build position context
+    let positionContext = 'No open positions.';
+    if (openPositions && openPositions.length > 0) {
+      const posData = openPositions.map(p => {
+        const snap = snapshots.find(s => s.symbol === p.symbol);
+        const currentPrice = snap?.price ?? 0;
+        const unrealizedPnl = (currentPrice - p.entryPrice) * p.size * (p.side === 'buy' ? 1 : -1);
+        return {
+          symbol: p.symbol,
+          side: p.side,
+          entry: p.entryPrice,
+          current_price: currentPrice,
+          unrealized_pnl: `$${unrealizedPnl.toFixed(2)}`,
+          sl: p.stopLoss,
+          tp: p.takeProfit,
+          held_minutes: Math.floor((Date.now() - p.openedAt) / 60_000),
+        };
+      });
+      positionContext = JSON.stringify(posData, null, 2);
+    }
+
+    const urgencyLabel = triggerScore.totalScore >= 11 ? 'URGENT' : 'STANDARD';
+
+    const prompt = [
+      `[TRIGGER ${urgencyLabel}] Score: ${triggerScore.totalScore}/33 | ${triggerScore.symbol} | Bias: ${triggerScore.directionBias.toUpperCase()}`,
+      '',
+      `=== TRIGGER SIGNALS ===`,
+      JSON.stringify(triggerSummary, null, 2),
+      '',
+      `=== MARKET DATA (all tracked symbols) ===`,
+      JSON.stringify(marketData, null, 2),
+      '',
+      `=== OPEN POSITIONS ===`,
+      positionContext,
+      '',
+      `=== TASK ===`,
+      `The scoring system detected ${urgencyLabel.toLowerCase()} market activity for ${triggerScore.symbol}.`,
+      `${triggerScore.flags.length} indicators fired with direction bias: ${triggerScore.directionBias.toUpperCase()}.`,
+      `Decide: Is this a genuine trading opportunity or noise? Respond with JSON only.`,
+    ].join('\n');
 
     const response = await this.chat(prompt);
     return this.parseResponse(response);

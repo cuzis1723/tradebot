@@ -178,6 +178,13 @@ export interface MarketSnapshot {
   resistance: number;
   trend: 'bullish' | 'bearish' | 'neutral';
   timestamp: number;
+  // Extended indicators (optional for backward compatibility)
+  bollingerUpper?: number;
+  bollingerLower?: number;
+  bollingerWidth?: number;   // BB width as % of price
+  volumeRatio?: number;      // last 1h volume / 24h avg hourly volume
+  oiChange1h?: number;       // OI % change since last analysis
+  atrAvg20?: number;         // 20-period average ATR for volatility comparison
 }
 
 export interface TradeProposal {
@@ -206,4 +213,43 @@ export interface ActiveDiscretionaryPosition {
   takeProfit: number;
   proposalId: string;
   openedAt: number;
+}
+
+// === Trigger Score Types (v2) ===
+
+export interface TriggerFlag {
+  name: string;
+  category: 'price' | 'momentum' | 'volatility' | 'volume' | 'structure' | 'cross';
+  score: number;
+  direction: 'long' | 'short' | 'neutral';
+  detail: string;
+}
+
+export interface TriggerScore {
+  symbol: string;
+  totalScore: number;
+  flags: TriggerFlag[];
+  directionBias: 'long' | 'short' | 'neutral';
+  bonusScore: number;
+  timestamp: number;
+}
+
+export interface CooldownState {
+  symbolCooldowns: Map<string, number>;  // symbol -> last LLM call timestamp
+  globalLastCall: number;                // last LLM call timestamp (any symbol)
+  dailyCallCount: number;               // calls today
+  dailyResetTime: number;               // midnight UTC timestamp
+  consecutiveLosses: number;            // count of consecutive losing trades
+  lastLossTime: number;                 // timestamp of last loss
+}
+
+export interface ScorerConfig {
+  scanIntervalMs: number;        // 5 min = 300_000
+  llmThreshold: number;          // 8 points
+  alertThreshold: number;        // 5 points
+  symbolCooldownMs: number;      // 2 hours = 7_200_000
+  globalCooldownMs: number;      // 30 min = 1_800_000
+  maxDailyCalls: number;         // 12
+  lossCooldownMs: number;        // 4 hours = 14_400_000
+  maxConsecutiveLosses: number;  // 2
 }

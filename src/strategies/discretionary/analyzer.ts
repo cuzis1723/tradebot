@@ -1,4 +1,4 @@
-import { RSI, EMA, ATR } from 'technicalindicators';
+import { RSI, EMA, ATR, BollingerBands } from 'technicalindicators';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
 import { createChildLogger } from '../../monitoring/logger.js';
 import type { MarketSnapshot } from '../../core/types.js';
@@ -17,6 +17,7 @@ interface CandleData {
 export class MarketAnalyzer {
   private candleCache: Map<string, CandleData[]> = new Map();
   private midPriceCache: Map<string, number> = new Map();
+  private oiCache: Map<string, number> = new Map();
 
   async fetchCandles(symbol: string, interval: '1h' | '4h' = '1h', limit: number = 100): Promise<CandleData[]> {
     const hl = getHyperliquidClient();
@@ -74,6 +75,10 @@ export class MarketAnalyzer {
     atr14: number;
     support: number;
     resistance: number;
+    bollingerUpper: number;
+    bollingerLower: number;
+    bollingerWidth: number;
+    atrAvg20: number;
   } {
     const closes = candles.map(c => c.close);
     const highs = candles.map(c => c.high);
@@ -93,6 +98,22 @@ export class MarketAnalyzer {
     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
     const atr14 = atrValues.length > 0 ? atrValues[atrValues.length - 1] : 0;
 
+    // ATR 20-period average: average of the last 20 ATR values for volatility comparison
+    const atrTail = atrValues.slice(-20);
+    const atrAvg20 = atrTail.length > 0
+      ? atrTail.reduce((sum, v) => sum + v, 0) / atrTail.length
+      : atr14;
+
+    // Bollinger Bands (period 20, stdDev 2)
+    const bbValues = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+    const lastBB = bbValues.length > 0 ? bbValues[bbValues.length - 1] : null;
+    const currentPrice = closes[closes.length - 1];
+    const bollingerUpper = lastBB ? lastBB.upper : currentPrice;
+    const bollingerLower = lastBB ? lastBB.lower : currentPrice;
+    const bollingerWidth = currentPrice > 0
+      ? ((bollingerUpper - bollingerLower) / currentPrice) * 100
+      : 0;
+
     // Simple support/resistance from recent swing highs/lows (last 20 candles)
     const recentCandles = candles.slice(-20);
     const recentHighs = recentCandles.map(c => c.high);
@@ -100,7 +121,7 @@ export class MarketAnalyzer {
     const resistance = Math.max(...recentHighs);
     const support = Math.min(...recentLows);
 
-    return { rsi14, ema9, ema21, atr14, support, resistance };
+    return { rsi14, ema9, ema21, atr14, support, resistance, bollingerUpper, bollingerLower, bollingerWidth, atrAvg20 };
   }
 
   async analyze(symbol: string): Promise<MarketSnapshot | null> {
@@ -132,13 +153,47 @@ export class MarketAnalyzer {
         : 0;
 
       // Volume (sum of last 24 candles)
-      const volume24h = candles1h.slice(-24).reduce((sum, c) => sum + c.volume, 0);
+      const last24Candles = candles1h.slice(-24);
+      const volume24h = last24Candles.reduce((sum, c) => sum + c.volume, 0);
+
+      // Volume ratio: last completed 1h candle volume / average hourly volume over 24h
+      const avgHourlyVolume = last24Candles.length > 0
+        ? volume24h / last24Candles.length
+        : 0;
+      // Use the second-to-last candle (last completed) for comparison; current candle may be incomplete
+      const lastCompletedVolume = candles1h.length >= 2
+        ? candles1h[candles1h.length - 2].volume
+        : 0;
+      const volumeRatio = avgHourlyVolume > 0
+        ? lastCompletedVolume / avgHourlyVolume
+        : 0;
 
       // Funding rate
       const hl = getHyperliquidClient();
       const fundingRates = await hl.getFundingRates();
       const funding = fundingRates.find(f => f.symbol === symbol);
       const fundingRate = funding ? funding.rate.toNumber() : 0;
+
+      // OI change - try to get from asset infos (may not be available on testnet)
+      let oiChange1h: number | undefined;
+      try {
+        const assetInfos = await hl.getAssetInfos();
+        const coin = symbol.replace('-PERP', '');
+        const assetInfo = assetInfos.find(a => a.name === coin);
+        if (assetInfo && assetInfo.openInterest > 0) {
+          // We don't have historical OI readily available, so store current OI
+          // and compute change on subsequent calls
+          const cacheKey = `oi:${symbol}`;
+          const prevOI = this.oiCache.get(cacheKey);
+          const currentOI = assetInfo.openInterest;
+          if (prevOI !== undefined && prevOI > 0) {
+            oiChange1h = ((currentOI - prevOI) / prevOI) * 100;
+          }
+          this.oiCache.set(cacheKey, currentOI);
+        }
+      } catch (err) {
+        log.debug({ err, symbol }, 'OI data not available');
+      }
 
       // Trend determination
       let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
@@ -164,6 +219,12 @@ export class MarketAnalyzer {
         resistance: indicators.resistance,
         trend,
         timestamp: Date.now(),
+        bollingerUpper: indicators.bollingerUpper,
+        bollingerLower: indicators.bollingerLower,
+        bollingerWidth: indicators.bollingerWidth,
+        volumeRatio,
+        oiChange1h,
+        atrAvg20: indicators.atrAvg20,
       };
     } catch (err) {
       log.error({ err, symbol }, 'Market analysis failed');
@@ -184,7 +245,7 @@ export class MarketAnalyzer {
     const changeIcon = (v: number) => v >= 0 ? '📈' : '📉';
     const trendIcon = snapshot.trend === 'bullish' ? '🟢' : snapshot.trend === 'bearish' ? '🔴' : '🟡';
 
-    return [
+    const lines = [
       `<b>${snapshot.symbol}</b> ${trendIcon} ${snapshot.trend.toUpperCase()}`,
       `Price: $${snapshot.price.toFixed(2)}`,
       `${changeIcon(snapshot.change1h)} 1h: ${snapshot.change1h >= 0 ? '+' : ''}${snapshot.change1h.toFixed(2)}%`,
@@ -194,6 +255,26 @@ export class MarketAnalyzer {
       `ATR(14): ${snapshot.atr14.toFixed(2)} | Vol24h: $${(snapshot.volume24h / 1_000_000).toFixed(1)}M`,
       `Support: $${snapshot.support.toFixed(2)} | Resistance: $${snapshot.resistance.toFixed(2)}`,
       `Funding: ${(snapshot.fundingRate * 100).toFixed(4)}%/hr`,
-    ].join('\n');
+    ];
+
+    // Append extended indicator lines when available
+    if (snapshot.bollingerUpper !== undefined && snapshot.bollingerLower !== undefined) {
+      lines.push(
+        `BB(20,2): $${snapshot.bollingerLower.toFixed(2)} - $${snapshot.bollingerUpper.toFixed(2)}` +
+        (snapshot.bollingerWidth !== undefined ? ` (W: ${snapshot.bollingerWidth.toFixed(2)}%)` : ''),
+      );
+    }
+    if (snapshot.volumeRatio !== undefined) {
+      lines.push(`VolRatio: ${snapshot.volumeRatio.toFixed(2)}x avg`);
+    }
+    if (snapshot.atrAvg20 !== undefined) {
+      const atrRatio = snapshot.atrAvg20 > 0 ? (snapshot.atr14 / snapshot.atrAvg20) : 0;
+      lines.push(`ATR avg(20): ${snapshot.atrAvg20.toFixed(2)} (current ${atrRatio.toFixed(2)}x avg)`);
+    }
+    if (snapshot.oiChange1h !== undefined) {
+      lines.push(`OI 1h: ${snapshot.oiChange1h >= 0 ? '+' : ''}${snapshot.oiChange1h.toFixed(2)}%`);
+    }
+
+    return lines.join('\n');
   }
 }
