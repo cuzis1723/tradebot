@@ -1,0 +1,25 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - claude/pedantic-heisenberg
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /home/tradebot/project/tradebot
+            git pull origin claude/pedantic-heisenberg
+            npm install --production=false
+            npm run build
+            pm2 restart tradebot || pm2 start ecosystem.config.cjs
+            echo "Deploy complete at $(date)"
