@@ -1,0 +1,107 @@
+import { Decimal } from 'decimal.js';
+import { config } from '../config/index.js';
+import { createChildLogger } from '../monitoring/logger.js';
+import type { TradeSignal, RiskCheckResult, RiskLimits } from './types.js';
+import type { Strategy } from '../strategies/base.js';
+
+const log = createChildLogger('risk-manager');
+
+export class RiskManager {
+  private limits: RiskLimits;
+  private peakPortfolioValue: Decimal = new Decimal(0);
+  private currentPortfolioValue: Decimal = new Decimal(0);
+
+  constructor(limits?: Partial<RiskLimits>) {
+    this.limits = {
+      maxGlobalDrawdownPct: limits?.maxGlobalDrawdownPct ?? config.maxGlobalDrawdownPct,
+      maxStrategyDrawdownPct: limits?.maxStrategyDrawdownPct ?? config.maxStrategyDrawdownPct,
+      maxPositionSizePct: limits?.maxPositionSizePct ?? 5,
+      maxDailyLossPct: limits?.maxDailyLossPct ?? config.maxDailyLossPct,
+      maxOpenPositions: limits?.maxOpenPositions ?? 20,
+      maxLeverage: limits?.maxLeverage ?? 5,
+    };
+  }
+
+  checkSignal(signal: TradeSignal, strategy: Strategy): RiskCheckResult {
+    // Check if strategy is running
+    if (!strategy.isRunning()) {
+      return { approved: false, reason: `Strategy ${signal.strategyId} is not running` };
+    }
+
+    // Check strategy drawdown
+    const strategyDrawdown = strategy.getDrawdownPct();
+    if (strategyDrawdown >= this.limits.maxStrategyDrawdownPct) {
+      log.warn(
+        { strategyId: signal.strategyId, drawdown: strategyDrawdown },
+        'Strategy drawdown limit reached - pausing strategy'
+      );
+      strategy.pause();
+      return {
+        approved: false,
+        reason: `Strategy drawdown ${strategyDrawdown.toFixed(1)}% exceeds limit ${this.limits.maxStrategyDrawdownPct}%`,
+      };
+    }
+
+    // Check daily loss limit
+    const dailyLoss = strategy.getDailyLossPct();
+    if (dailyLoss >= this.limits.maxDailyLossPct) {
+      log.warn(
+        { strategyId: signal.strategyId, dailyLoss },
+        'Daily loss limit reached - pausing strategy'
+      );
+      strategy.pause();
+      return {
+        approved: false,
+        reason: `Daily loss ${dailyLoss.toFixed(1)}% exceeds limit ${this.limits.maxDailyLossPct}%`,
+      };
+    }
+
+    // Position size check (grid bot manages its own sizing, so we allow for now)
+
+    log.debug({ strategyId: signal.strategyId, symbol: signal.symbol }, 'Signal approved');
+    return { approved: true };
+  }
+
+  updatePortfolioValue(value: Decimal): void {
+    this.currentPortfolioValue = value;
+    if (value.greaterThan(this.peakPortfolioValue)) {
+      this.peakPortfolioValue = value;
+    }
+  }
+
+  checkGlobalDrawdown(): RiskCheckResult {
+    if (this.peakPortfolioValue.isZero()) return { approved: true };
+
+    const drawdownPct = this.peakPortfolioValue
+      .minus(this.currentPortfolioValue)
+      .div(this.peakPortfolioValue)
+      .mul(100)
+      .toNumber();
+
+    if (drawdownPct >= this.limits.maxGlobalDrawdownPct) {
+      log.error(
+        { drawdown: drawdownPct, peak: this.peakPortfolioValue.toString(), current: this.currentPortfolioValue.toString() },
+        'GLOBAL DRAWDOWN LIMIT REACHED - ALL STRATEGIES SHOULD PAUSE'
+      );
+      return {
+        approved: false,
+        reason: `Global drawdown ${drawdownPct.toFixed(1)}% exceeds limit ${this.limits.maxGlobalDrawdownPct}%`,
+      };
+    }
+
+    return { approved: true };
+  }
+
+  getLimits(): RiskLimits {
+    return { ...this.limits };
+  }
+
+  getGlobalDrawdownPct(): number {
+    if (this.peakPortfolioValue.isZero()) return 0;
+    return this.peakPortfolioValue
+      .minus(this.currentPortfolioValue)
+      .div(this.peakPortfolioValue)
+      .mul(100)
+      .toNumber();
+  }
+}
