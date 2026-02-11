@@ -1,6 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Strategy } from '../base.js';
 import { MarketAnalyzer } from './analyzer.js';
+import { MarketScorer } from './scorer.js';
 import { LLMAdvisor } from './llm-advisor.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
 import { logTrade } from '../../data/storage.js';
@@ -13,6 +14,7 @@ import type {
   TradeProposal,
   MarketSnapshot,
   ActiveDiscretionaryPosition,
+  TriggerScore,
 } from '../../core/types.js';
 
 export class DiscretionaryStrategy extends Strategy {
@@ -23,12 +25,14 @@ export class DiscretionaryStrategy extends Strategy {
 
   private config: DiscretionaryConfig;
   private analyzer: MarketAnalyzer;
+  private scorer: MarketScorer;
   private advisor: LLMAdvisor;
   private pendingProposals: Map<string, TradeProposal> = new Map();
   private positions: ActiveDiscretionaryPosition[] = [];
   private analysisInterval: ReturnType<typeof setInterval> | null = null;
   private lastAnalysisTime = 0;
   private latestSnapshots: MarketSnapshot[] = [];
+  private latestScores: TriggerScore[] = [];
 
   // Callback to send Telegram messages - set by engine/telegram integration
   public onProposal: ((proposal: TradeProposal, snapshot: MarketSnapshot) => Promise<void>) | null = null;
@@ -38,25 +42,26 @@ export class DiscretionaryStrategy extends Strategy {
     super();
     this.config = cfg;
     this.analyzer = new MarketAnalyzer();
+    this.scorer = new MarketScorer();
     this.advisor = new LLMAdvisor();
   }
 
   async onInit(): Promise<void> {
-    this.log.info({ symbols: this.config.symbols }, 'Discretionary strategy initializing');
+    this.log.info({ symbols: this.config.symbols }, 'Discretionary v2 strategy initializing (score-triggered)');
 
     if (!this.advisor.isAvailable()) {
       this.log.warn('LLM advisor not available - manual mode only');
     }
 
-    // Start periodic market analysis
+    // Start 5-min score-based scan cycle
     this.analysisInterval = setInterval(() => {
-      this.runAnalysisCycle().catch(err => {
-        this.log.error({ err }, 'Analysis cycle error');
+      this.runScoringCycle().catch(err => {
+        this.log.error({ err }, 'Scoring cycle error');
       });
     }, this.config.analysisIntervalMs);
 
-    // Run initial analysis
-    await this.runAnalysisCycle();
+    // Run initial cycle
+    await this.runScoringCycle();
   }
 
   async onTick(_data: Record<string, string>): Promise<TradeSignal | null> {
@@ -81,43 +86,84 @@ export class DiscretionaryStrategy extends Strategy {
     this.log.info('Discretionary strategy stopped');
   }
 
-  // === Core Analysis Cycle ===
+  // === Core Scoring Cycle (v2: score-triggered LLM calls) ===
 
-  private async runAnalysisCycle(): Promise<void> {
+  private async runScoringCycle(): Promise<void> {
     if (!this.isRunning()) return;
 
     const now = Date.now();
     if (now - this.lastAnalysisTime < this.config.analysisIntervalMs * 0.9) return;
     this.lastAnalysisTime = now;
 
-    this.log.info('Running market analysis cycle...');
+    this.log.info('Running scoring cycle...');
 
-    // Fetch market data for all tracked symbols
+    // Step 1: Fetch market data for all tracked symbols
     this.latestSnapshots = await this.analyzer.analyzeMultiple(this.config.symbols);
     if (this.latestSnapshots.length === 0) {
       this.log.warn('No market data available');
       return;
     }
 
-    // If LLM is available, ask for trade opportunities
-    if (this.advisor.isAvailable() && this.pendingProposals.size === 0) {
-      try {
-        const result = await this.advisor.analyzeMarket(this.latestSnapshots);
+    // Step 2: Score all symbols (code-based, cost-free)
+    this.latestScores = this.scorer.scoreAll(this.latestSnapshots);
 
-        if (result.action === 'propose_trade' && result.proposal) {
-          this.pendingProposals.set(result.proposal.id, result.proposal);
-          this.log.info({ proposal: result.proposal }, 'New trade proposal generated');
+    for (const score of this.latestScores) {
+      const action = this.scorer.getAction(score);
 
-          // Notify via Telegram
-          const snapshot = this.latestSnapshots.find(s => s.symbol === result.proposal!.symbol);
-          if (this.onProposal && snapshot) {
-            await this.onProposal(result.proposal, snapshot);
-          }
-        } else if (result.action === 'no_trade') {
-          this.log.debug({ reason: result.content }, 'No trade opportunity found');
+      if (action === 'ignore') {
+        this.log.debug({ symbol: score.symbol, score: score.totalScore }, 'Score below threshold');
+        continue;
+      }
+
+      // Alert: log + Telegram notification (5-7 points)
+      if (action === 'alert') {
+        this.log.info({ symbol: score.symbol, score: score.totalScore, flags: score.flags.length }, 'Score alert');
+        if (this.onMessage) {
+          await this.onMessage(this.scorer.formatScore(score));
         }
-      } catch (err) {
-        this.log.error({ err }, 'LLM analysis failed');
+        continue;
+      }
+
+      // LLM call or urgent (8+ points): check cooldown first
+      if (action === 'llm_call' || action === 'llm_urgent') {
+        const cooldownCheck = this.scorer.canCallLLM(score.symbol);
+        if (!cooldownCheck.allowed) {
+          this.log.info({ symbol: score.symbol, score: score.totalScore, reason: cooldownCheck.reason }, 'LLM call blocked by cooldown');
+          if (this.onMessage) {
+            await this.onMessage(`${this.scorer.formatScore(score)}\n⏳ ${cooldownCheck.reason}`);
+          }
+          continue;
+        }
+
+        // Step 3: Call LLM with trigger context
+        if (this.advisor.isAvailable() && this.pendingProposals.size === 0) {
+          this.log.info({ symbol: score.symbol, score: score.totalScore, action }, 'Triggering LLM analysis');
+          this.scorer.recordLLMCall(score.symbol);
+
+          try {
+            const snapshot = this.latestSnapshots.find(s => s.symbol === score.symbol);
+            const result = await this.advisor.analyzeMarketWithTrigger(
+              this.latestSnapshots,
+              score,
+            );
+
+            if (result.action === 'propose_trade' && result.proposal) {
+              this.pendingProposals.set(result.proposal.id, result.proposal);
+              this.log.info({ proposal: result.proposal }, 'New trade proposal generated');
+
+              if (this.onProposal && snapshot) {
+                await this.onProposal(result.proposal, snapshot);
+              }
+            } else if (result.action === 'no_trade') {
+              this.log.debug({ reason: result.content }, 'LLM: No trade opportunity');
+              if (this.onMessage) {
+                await this.onMessage(`${this.scorer.formatScore(score)}\nLLM: ${result.content ?? 'No opportunity'}`);
+              }
+            }
+          } catch (err) {
+            this.log.error({ err }, 'LLM analysis failed');
+          }
+        }
       }
     }
   }
@@ -208,6 +254,22 @@ export class DiscretionaryStrategy extends Strategy {
     if (!position) return `No open position for ${symbol}.`;
 
     return await this.closePosition(position);
+  }
+
+  async handleScoreRequest(): Promise<string> {
+    // Force a fresh scoring cycle
+    this.latestSnapshots = await this.analyzer.analyzeMultiple(this.config.symbols);
+    if (this.latestSnapshots.length === 0) return 'No market data available.';
+
+    this.latestScores = this.scorer.scoreAll(this.latestSnapshots);
+    if (this.latestScores.length === 0) return 'No scores computed.';
+
+    const parts = this.latestScores.map(s => this.scorer.formatScore(s));
+    return parts.join('\n\n');
+  }
+
+  handleCooldownRequest(): string {
+    return this.scorer.getCooldownStatus();
   }
 
   async handleAskQuestion(question: string): Promise<string> {
@@ -307,9 +369,10 @@ export class DiscretionaryStrategy extends Strategy {
       // Remove from tracked positions
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
 
-      // Log and record
+      // Log, record, and update scorer cooldown
       logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, position.size, 0, pnl);
       this.recordTrade(new Decimal(pnl));
+      this.scorer.recordTradeResult(pnl >= 0);
 
       this.emit('trade', {
         strategy: this.name,
@@ -398,5 +461,13 @@ export class DiscretionaryStrategy extends Strategy {
 
   getSnapshots(): MarketSnapshot[] {
     return [...this.latestSnapshots];
+  }
+
+  getScores(): TriggerScore[] {
+    return [...this.latestScores];
+  }
+
+  getScorer(): MarketScorer {
+    return this.scorer;
   }
 }

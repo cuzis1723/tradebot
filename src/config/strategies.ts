@@ -5,7 +5,7 @@ export const defaultGridConfig: GridConfig = {
   upperPrice: 3000,
   lowerPrice: 2000,
   gridCount: 20,
-  capitalUsd: 200,
+  capitalUsd: 100,
   leverage: 3,
 };
 
@@ -29,8 +29,8 @@ export const defaultMomentumConfig: MomentumConfig = {
 
 export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  capitalUsd: 300,
-  leverage: 3,
-  analysisIntervalMs: 15 * 60 * 1000, // 15 minutes
+  capitalUsd: 600,
+  leverage: 5,
+  analysisIntervalMs: 5 * 60 * 1000, // 5 minutes
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
 };

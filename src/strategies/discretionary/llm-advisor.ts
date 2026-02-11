@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config/index.js';
 import { createChildLogger } from '../../monitoring/logger.js';
-import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition } from '../../core/types.js';
+import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore } from '../../core/types.js';
 import { randomUUID } from 'crypto';
 
 const log = createChildLogger('llm-advisor');
@@ -114,6 +114,68 @@ export class LLMAdvisor {
     }));
 
     const prompt = `Current market data:\n${JSON.stringify(marketData, null, 2)}\n\nAnalyze these markets and propose a trade if there's a good opportunity. If not, explain why.`;
+
+    const response = await this.chat(prompt);
+    return this.parseResponse(response);
+  }
+
+  async analyzeMarketWithTrigger(
+    snapshots: MarketSnapshot[],
+    triggerScore: TriggerScore,
+  ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
+    const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
+    if (!targetSnapshot) {
+      return { action: 'no_trade', content: `No snapshot data for ${triggerScore.symbol}` };
+    }
+
+    const marketData = snapshots.map(s => ({
+      symbol: s.symbol,
+      price: s.price,
+      change_1h: `${s.change1h.toFixed(2)}%`,
+      change_4h: `${s.change4h.toFixed(2)}%`,
+      change_24h: `${s.change24h.toFixed(2)}%`,
+      rsi14: s.rsi14.toFixed(1),
+      ema9: s.ema9.toFixed(2),
+      ema21: s.ema21.toFixed(2),
+      atr14: s.atr14.toFixed(2),
+      support: s.support.toFixed(2),
+      resistance: s.resistance.toFixed(2),
+      funding_rate_pct_hr: (s.fundingRate * 100).toFixed(4),
+      trend: s.trend,
+      volume_24h_usd: s.volume24h.toFixed(0),
+      ...(s.bollingerUpper !== undefined && { bb_upper: s.bollingerUpper.toFixed(2) }),
+      ...(s.bollingerLower !== undefined && { bb_lower: s.bollingerLower.toFixed(2) }),
+      ...(s.volumeRatio !== undefined && { volume_ratio: `${s.volumeRatio.toFixed(2)}x` }),
+      ...(s.oiChange1h !== undefined && { oi_change_1h: `${s.oiChange1h.toFixed(2)}%` }),
+    }));
+
+    const triggerSummary = {
+      symbol: triggerScore.symbol,
+      total_score: triggerScore.totalScore,
+      direction_bias: triggerScore.directionBias,
+      bonus: triggerScore.bonusScore,
+      triggers: triggerScore.flags.map(f => ({
+        name: f.name,
+        category: f.category,
+        score: f.score,
+        direction: f.direction,
+        detail: f.detail,
+      })),
+    };
+
+    const prompt = [
+      `[TRIGGER ALERT] Score: ${triggerScore.totalScore} | ${triggerScore.symbol} | Bias: ${triggerScore.directionBias.toUpperCase()}`,
+      '',
+      `Triggered indicators:`,
+      JSON.stringify(triggerSummary, null, 2),
+      '',
+      `Full market data:`,
+      JSON.stringify(marketData, null, 2),
+      '',
+      `The scoring system detected unusual market activity for ${triggerScore.symbol}.`,
+      `Direction bias from indicators: ${triggerScore.directionBias.toUpperCase()}.`,
+      `Analyze whether this is a genuine trading opportunity. If yes, propose a trade. If not, explain why this is noise.`,
+    ].join('\n');
 
     const response = await this.chat(prompt);
     return this.parseResponse(response);

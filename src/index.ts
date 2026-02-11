@@ -1,12 +1,10 @@
 import { TradingEngine } from './core/engine.js';
 import { GridStrategy } from './strategies/grid/index.js';
 import { DiscretionaryStrategy } from './strategies/discretionary/index.js';
-import { FundingArbStrategy } from './strategies/funding-arb/index.js';
 import { MomentumStrategy } from './strategies/momentum/index.js';
 import {
   defaultGridConfig,
   defaultDiscretionaryConfig,
-  defaultFundingArbConfig,
   defaultMomentumConfig,
 } from './config/strategies.js';
 import { setDiscretionaryStrategy } from './monitoring/telegram.js';
@@ -22,9 +20,6 @@ async function main(): Promise<void> {
   // Register all strategies
   const gridStrategy = new GridStrategy(defaultGridConfig);
   engine.addStrategy(gridStrategy);
-
-  const fundingArbStrategy = new FundingArbStrategy(defaultFundingArbConfig);
-  engine.addStrategy(fundingArbStrategy);
 
   const momentumStrategy = new MomentumStrategy(defaultMomentumConfig);
   engine.addStrategy(momentumStrategy);

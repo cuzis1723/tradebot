@@ -86,12 +86,15 @@
 
 ## 남은 작업 (Todo)
 
-### v2 전략 재편 (다음 구현)
-- [ ] Discretionary v2: 스코어링 엔진 + 스마트 LLM 트리거 (아래 설계 참고)
-- [ ] Funding Arb 전략 비활성화 (엔진에서 제거)
+### v2 전략 재편
+- [x] Discretionary v2: 스코어링 엔진 + 스마트 LLM 트리거
+- [x] Funding Arb 전략 비활성화 (엔진에서 제거)
+- [x] 자본 배분 재조정 (Discretionary 60%, Momentum 30%, Grid 10%)
+- [x] Telegram /score, /cooldown 명령어 추가
 - [ ] Grid 전략을 횡보장 전용으로 전환 (시장 상태 판단 로직)
 - [ ] Momentum 파라미터 최적화
 - [ ] 메인넷 전환
+- [ ] 15m 캔들 기반 트리거 지표 추가 (현재 1h 캔들만 사용)
 
 ### 향후 개선
 - [ ] 전략별 상세 백테스트
@@ -302,9 +305,10 @@ tradebot/
 │   │   ├── momentum/
 │   │   │   └── index.ts              # EMA crossover + RSI momentum
 │   │   └── discretionary/
-│   │       ├── index.ts              # Discretionary strategy (semi-auto)
-│   │       ├── analyzer.ts           # Market technical analysis
-│   │       └── llm-advisor.ts        # Anthropic API LLM advisor
+│   │       ├── index.ts              # Discretionary strategy (score-triggered v2)
+│   │       ├── analyzer.ts           # Market technical analysis (BB, OI, VolumeRatio)
+│   │       ├── scorer.ts             # Score-based trigger engine (13 indicators)
+│   │       └── llm-advisor.ts        # Anthropic API LLM advisor (trigger-aware)
 │   ├── data/
 │   │   └── storage.ts                # SQLite persistence
 │   └── monitoring/
@@ -334,7 +338,7 @@ ESM + TypeScript에서 반드시 `import { Decimal } from 'decimal.js'` 사용.
 
 ### Telegram Commands
 - **General**: /status, /pnl, /pause, /resume, /stop, /help
-- **Discretionary**: /market, /idea, /approve, /modify, /reject, /positions, /close, /ask
+- **Discretionary**: /market, /score, /cooldown, /idea, /approve, /modify, /reject, /positions, /close, /ask
 
 ---
 
