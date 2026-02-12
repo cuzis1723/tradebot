@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config/index.js';
 import { createChildLogger } from '../../monitoring/logger.js';
-import { TRADING_TOOLS, executeToolCall } from '../../core/llm-skills.js';
+import { TRADING_TOOLS, executeToolCall } from '../../core/trading-tools.js';
 import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore, MarketRegime, MarketDirection, BrainDirectives } from '../../core/types.js';
 import { randomUUID } from 'crypto';
 import { logLLMCall, updateLLMUsageDaily, getLLMUsageTotals, getLLMUsageToday } from '../../data/storage.js';
@@ -804,6 +804,82 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
       return result;
     } catch {
       log.warn({ response: response.slice(0, 200) }, 'Failed to parse comprehensive response');
+      return null;
+    }
+  }
+
+  /**
+   * Call LLM with a custom system prompt (used by skill pipeline).
+   * Does NOT use conversation history — each call is independent.
+   * Returns raw text response.
+   */
+  async callWithSystemPrompt(
+    systemPrompt: string,
+    userMessage: string,
+    logType: string = 'skill',
+  ): Promise<string> {
+    if (!this.client) throw new Error('LLM advisor not available');
+
+    try {
+      const response = await this.client.messages.create({
+        model: config.anthropicModel,
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+
+      if (response.usage) {
+        this.trackUsage(response.usage.input_tokens, response.usage.output_tokens);
+      }
+
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+
+      try {
+        logLLMCall(logType, userMessage, text, response.usage?.input_tokens ?? 0, response.usage?.output_tokens ?? 0, 0, config.anthropicModel);
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log LLM call');
+      }
+
+      return text;
+    } catch (err) {
+      log.error({ err }, 'callWithSystemPrompt failed');
+      throw err;
+    }
+  }
+
+  /**
+   * Call LLM for comprehensive analysis with a custom system prompt (used by skill pipeline).
+   * Returns parsed ComprehensiveResponse.
+   */
+  async callComprehensiveWithSystemPrompt(
+    systemPrompt: string,
+    context: string,
+  ): Promise<ComprehensiveResponse | null> {
+    if (!this.client) throw new Error('LLM advisor not available');
+
+    try {
+      const response = await this.client.messages.create({
+        model: config.anthropicModel,
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: context }],
+      });
+
+      if (response.usage) {
+        this.trackUsage(response.usage.input_tokens, response.usage.output_tokens);
+      }
+
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+
+      try {
+        logLLMCall('skill_comprehensive', context, text, response.usage?.input_tokens ?? 0, response.usage?.output_tokens ?? 0, 0, config.anthropicModel);
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log LLM call');
+      }
+
+      return this.parseComprehensiveResponse(text);
+    } catch (err) {
+      log.error({ err }, 'callComprehensiveWithSystemPrompt failed');
       return null;
     }
   }

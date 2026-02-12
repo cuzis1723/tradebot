@@ -129,6 +129,25 @@ function initSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_brain_decisions_type ON brain_decisions(type);
     CREATE INDEX IF NOT EXISTS idx_trade_proposals_timestamp ON trade_proposals(timestamp);
     CREATE INDEX IF NOT EXISTS idx_trade_proposals_status ON trade_proposals(status);
+
+    CREATE TABLE IF NOT EXISTS skill_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pipeline_type TEXT NOT NULL,
+      symbol TEXT,
+      context_summary TEXT,
+      signal_summary TEXT,
+      external_summary TEXT,
+      risk_summary TEXT,
+      llm_input_tokens INTEGER DEFAULT 0,
+      llm_output_tokens INTEGER DEFAULT 0,
+      decision TEXT,
+      duration_ms INTEGER,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_skill_logs_timestamp ON skill_logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_skill_logs_symbol ON skill_logs(symbol);
   `);
 }
 
@@ -332,6 +351,38 @@ export function getLLMUsageToday(): { totalCalls: number; totalInputTokens: numb
     WHERE date = ?
   `).get(date) as { totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } | undefined;
   return row ?? { totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCostUsd: 0 };
+}
+
+export function logSkillExecution(
+  pipelineType: string,
+  symbol: string | null,
+  contextSummary: string,
+  signalSummary: string,
+  externalSummary: string,
+  riskSummary: string,
+  llmInputTokens: number,
+  llmOutputTokens: number,
+  decision: string,
+  durationMs: number,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO skill_logs (pipeline_type, symbol, context_summary, signal_summary, external_summary, risk_summary, llm_input_tokens, llm_output_tokens, decision, duration_ms, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(pipelineType, symbol, contextSummary, signalSummary, externalSummary, riskSummary, llmInputTokens, llmOutputTokens, decision, durationMs, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function getRecentSkillLogs(limit: number = 10, symbol?: string): unknown[] {
+  const database = getDb();
+  if (symbol) {
+    return database.prepare(`
+      SELECT * FROM skill_logs WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?
+    `).all(symbol, limit);
+  }
+  return database.prepare(`
+    SELECT * FROM skill_logs ORDER BY timestamp DESC LIMIT ?
+  `).all(limit);
 }
 
 export function closeDb(): void {

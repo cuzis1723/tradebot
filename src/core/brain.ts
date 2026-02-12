@@ -3,12 +3,12 @@ import { MarketAnalyzer } from '../strategies/discretionary/analyzer.js';
 import { MarketScorer } from '../strategies/discretionary/scorer.js';
 import { LLMAdvisor } from '../strategies/discretionary/llm-advisor.js';
 import { InfoSourceAggregator } from '../data/sources/index.js';
+import { SkillPipeline } from './skills/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
 import { logBrainDecision, updateBrainDecisionTrade, logTradeProposal } from '../data/storage.js';
 import type {
   MarketState,
   BrainConfig,
-  MarketSnapshot,
   ActiveDiscretionaryPosition,
 } from './types.js';
 
@@ -60,6 +60,7 @@ export class Brain extends EventEmitter {
   private scorer: MarketScorer;
   private advisor: LLMAdvisor;
   private infoSources: InfoSourceAggregator;
+  private skillPipeline: SkillPipeline;
   private state: MarketState;
 
   private comprehensiveInterval: ReturnType<typeof setInterval> | null = null;
@@ -77,6 +78,7 @@ export class Brain extends EventEmitter {
     this.scorer = new MarketScorer(cfg.scorer);
     this.advisor = new LLMAdvisor();
     this.infoSources = new InfoSourceAggregator();
+    this.skillPipeline = new SkillPipeline(this.advisor);
     this.state = { ...DEFAULT_MARKET_STATE };
     this.dailyResetTime = this.getMidnightUTC();
   }
@@ -194,7 +196,7 @@ export class Brain extends EventEmitter {
     const infoFlags = infoSignals?.triggerFlags ?? [];
     this.state.latestScores = this.scorer.scoreAll(snapshots, infoFlags);
 
-    // Step 3: Call LLM for regime assessment
+    // Step 3: Call LLM for regime assessment via skill pipeline
     if (!this.advisor.isAvailable()) {
       log.warn('LLM not available for comprehensive analysis');
       this.state.lastComprehensiveAt = now;
@@ -203,8 +205,11 @@ export class Brain extends EventEmitter {
 
     try {
       const balance = await this.getBalance();
-      const context = this.buildComprehensiveContext(snapshots, infoSignals);
-      const response = await this.advisor.comprehensiveAnalysis(context, balance);
+      const positions = this.getPositions();
+      const response = await this.skillPipeline.runComprehensiveAssessment(
+        snapshots, this.state.latestScores, this.state, infoSignals, positions, balance,
+        this.scorer.getConsecutiveLosses(),
+      );
 
       if (response) {
         // Update market state from LLM response
@@ -315,21 +320,17 @@ export class Brain extends EventEmitter {
 
         if (!this.advisor.isAvailable()) continue;
 
-        // Trigger LLM for trade decision
-        log.info({ symbol: score.symbol, score: score.totalScore, action }, 'Urgent: triggering LLM');
+        // Trigger LLM for trade decision via skill pipeline
+        log.info({ symbol: score.symbol, score: score.totalScore, action }, 'Urgent: triggering skill pipeline');
         this.scorer.recordLLMCall(score.symbol);
         this.state.urgentTriggerCount++;
 
         try {
           const positions = this.getPositions();
-          const infoContext = this.infoSources.buildLLMContext();
           const balance = await this.getBalance();
-          const result = await this.advisor.analyzeMarketWithTrigger(
-            snapshots,
-            score,
-            positions,
-            infoContext !== 'No external data sources available.' ? infoContext : undefined,
-            balance,
+          const result = await this.skillPipeline.runUrgentDecision(
+            score, snapshots, this.state, infoSignals, positions, balance,
+            this.scorer.getConsecutiveLosses(),
           );
 
           if (result.action === 'propose_trade' && result.proposal) {
@@ -398,89 +399,6 @@ export class Brain extends EventEmitter {
   }
 
   // ========== Helpers ==========
-
-  private buildComprehensiveContext(snapshots: MarketSnapshot[], infoSignals?: import('./types.js').InfoSignals | null): string {
-    const marketData = snapshots.map(s => ({
-      symbol: s.symbol,
-      price: s.price,
-      change_1h: `${s.change1h.toFixed(2)}%`,
-      change_4h: `${s.change4h.toFixed(2)}%`,
-      change_24h: `${s.change24h.toFixed(2)}%`,
-      rsi14: s.rsi14.toFixed(1),
-      ema9: s.ema9.toFixed(2),
-      ema21: s.ema21.toFixed(2),
-      atr14: s.atr14.toFixed(2),
-      support: s.support.toFixed(2),
-      resistance: s.resistance.toFixed(2),
-      funding: `${(s.fundingRate * 100).toFixed(4)}%/h`,
-      trend: s.trend,
-      volume_24h: `$${(s.volume24h / 1_000_000).toFixed(1)}M`,
-      ...(s.bollingerWidth !== undefined && { bb_width: `${s.bollingerWidth.toFixed(2)}%` }),
-      ...(s.volumeRatio !== undefined && { vol_ratio: `${s.volumeRatio.toFixed(2)}x` }),
-      ...(s.oiChange1h !== undefined && { oi_change: `${s.oiChange1h.toFixed(2)}%` }),
-    }));
-
-    // Score summary
-    const scoreSummary = this.state.latestScores
-      .filter(s => s.totalScore >= 3)
-      .map(s => ({
-        symbol: s.symbol,
-        score: s.totalScore,
-        bias: s.directionBias,
-        flags: s.flags.map(f => f.name).join(', '),
-      }));
-
-    // Position summary
-    const positions = this.getPositions();
-    const positionSummary = positions.length > 0
-      ? positions.map(p => ({
-        symbol: p.symbol,
-        side: p.side,
-        entry: p.entryPrice,
-        sl: p.stopLoss,
-        tp: p.takeProfit,
-        held_min: Math.floor((Date.now() - p.openedAt) / 60_000),
-      }))
-      : 'No open positions';
-
-    // Previous state for continuity
-    const prevState = {
-      regime: this.state.regime,
-      direction: this.state.direction,
-      riskLevel: this.state.riskLevel,
-      confidence: this.state.confidence,
-    };
-
-    // Info sources context
-    const infoContext = infoSignals ? this.infoSources.buildLLMContext() : 'External data sources not available.';
-
-    return [
-      `=== COMPREHENSIVE MARKET ANALYSIS (every 30min) ===`,
-      '',
-      `=== PREVIOUS STATE ===`,
-      JSON.stringify(prevState, null, 2),
-      '',
-      `=== MARKET DATA ===`,
-      JSON.stringify(marketData, null, 2),
-      '',
-      `=== TRIGGER SCORES (notable) ===`,
-      JSON.stringify(scoreSummary, null, 2),
-      '',
-      `=== EXTERNAL INTELLIGENCE ===`,
-      infoContext,
-      '',
-      `=== OPEN POSITIONS ===`,
-      typeof positionSummary === 'string' ? positionSummary : JSON.stringify(positionSummary, null, 2),
-      '',
-      `=== TASK ===`,
-      `Assess the current market regime, direction, and risk level.`,
-      `Provide strategic directives for each strategy.`,
-      `Factor in EXTERNAL INTELLIGENCE: prediction market probabilities, DeFi TVL flows, and trending sentiment.`,
-      `Consider: Are we trending? Ranging? Is volatility expanding?`,
-      `Should strategies be aggressive or defensive?`,
-      `Respond with JSON only.`,
-    ].join('\n');
-  }
 
   private formatStateUpdate(): string {
     const regimeIcon: Record<string, string> = {

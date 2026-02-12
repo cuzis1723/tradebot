@@ -345,6 +345,11 @@ export class MarketScorer {
     this.cooldown.dailyCallCount++;
   }
 
+  // Get current consecutive loss count
+  getConsecutiveLosses(): number {
+    return this.cooldown.consecutiveLosses;
+  }
+
   // Record trade result for loss tracking
   recordTradeResult(won: boolean): void {
     if (won) {
