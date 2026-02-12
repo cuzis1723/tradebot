@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TradeBot Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text2: #8b949e; --green: #3fb950;
+    --red: #f85149; --blue: #58a6ff; --yellow: #d29922;
+    --orange: #db6d28;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', monospace; font-size: 14px; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+  .status-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.off { background: var(--red); }
+  .uptime { color: var(--text2); font-size: 12px; }
+
+  .grid { display: grid; gap: 12px; margin-bottom: 16px; }
+  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .card-title { font-size: 11px; text-transform: uppercase; color: var(--text2); letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card-value { font-size: 22px; font-weight: 700; }
+  .card-value.positive { color: var(--green); }
+  .card-value.negative { color: var(--red); }
+  .card-sub { font-size: 11px; color: var(--text2); margin-top: 4px; }
+
+  .chart-card { padding: 14px; }
+  .chart-card h3 { font-size: 13px; margin-bottom: 10px; color: var(--text2); }
+  .chart-wrap { position: relative; height: 260px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--text2); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  tr:hover { background: rgba(88,166,255,0.04); }
+  .pnl-pos { color: var(--green); }
+  .pnl-neg { color: var(--red); }
+  .side-buy { color: var(--green); font-weight: 600; }
+  .side-sell { color: var(--red); font-weight: 600; }
+
+  .brain-card { display: flex; gap: 12px; flex-wrap: wrap; }
+  .brain-item { flex: 1; min-width: 100px; }
+  .brain-label { font-size: 11px; color: var(--text2); }
+  .brain-val { font-size: 16px; font-weight: 600; margin-top: 2px; }
+
+  .score-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .score-symbol { font-weight: 600; min-width: 80px; }
+  .score-bar { height: 6px; border-radius: 3px; transition: width 0.3s; }
+  .score-num { min-width: 30px; text-align: right; font-size: 12px; color: var(--text2); }
+  .score-dir { font-size: 12px; }
+
+  .refresh-info { font-size: 11px; color: var(--text2); }
+  .strat-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+  .strat-running { background: rgba(63,185,80,0.15); color: var(--green); }
+  .strat-paused { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .strat-stopped { background: rgba(248,81,73,0.15); color: var(--red); }
+
+  .section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <header>
+    <div>
+      <h1><span class="status-dot" id="statusDot"></span>TradeBot</h1>
+      <span class="uptime" id="uptime"></span>
+    </div>
+    <span class="refresh-info">auto-refresh 30s</span>
+  </header>
+
+  <!-- Summary Cards -->
+  <div class="grid grid-4">
+    <div class="card">
+      <div class="card-title">Balance</div>
+      <div class="card-value" id="balance">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Total PnL</div>
+      <div class="card-value" id="totalPnl">-</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Win Rate</div>
+      <div class="card-value" id="winRate">-</div>
+      <div class="card-sub" id="tradeCount"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">LLM Calls Today</div>
+      <div class="card-value" id="llmCalls">-</div>
+      <div class="card-sub" id="llmCost"></div>
+    </div>
+  </div>
+
+  <!-- Brain State -->
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card-title">Brain State</div>
+    <div class="brain-card">
+      <div class="brain-item"><div class="brain-label">Regime</div><div class="brain-val" id="brainRegime">-</div></div>
+      <div class="brain-item"><div class="brain-label">Direction</div><div class="brain-val" id="brainDir">-</div></div>
+      <div class="brain-item"><div class="brain-label">Risk</div><div class="brain-val" id="brainRisk">-</div></div>
+      <div class="brain-item"><div class="brain-label">Confidence</div><div class="brain-val" id="brainConf">-</div></div>
+    </div>
+    <div class="card-sub" id="brainReasoning" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid grid-2">
+    <div class="card chart-card">
+      <h3>Cumulative PnL</h3>
+      <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Daily PnL</h3>
+      <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Strategies + Scores -->
+  <div class="grid grid-2" style="margin-top:12px;">
+    <div class="card">
+      <div class="section-title">Strategies</div>
+      <div id="strategies"></div>
+    </div>
+    <div class="card">
+      <div class="section-title">Latest Scores</div>
+      <div id="scores"></div>
+    </div>
+  </div>
+
+  <!-- Positions -->
+  <div class="card" style="margin-top:12px;">
+    <div class="section-title">Open Positions</div>
+    <div id="positionsWrap">
+      <table><thead><tr><th>Symbol</th><th>Side</th><th>Size</th><th>Entry</th><th>Mark</th><th>uPnL</th><th>Lev</th></tr></thead><tbody id="positions"></tbody></table>
+    </div>
+  </div>
+
+  <!-- Recent Trades -->
+  <div class="card" style="margin-top:12px;">
+    <div class="section-title">Recent Trades</div>
+    <table>
+      <thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Side</th><th>Price</th><th>Size</th><th>PnL</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = s => document.getElementById(s);
+let pnlChart, dailyChart;
+
+function fmtUsd(v) {
+  if (v === undefined || v === null) return '-';
+  const n = Number(v);
+  return (n >= 0 ? '+' : '') + '$' + n.toFixed(2);
+}
+function pnlClass(v) { return Number(v) >= 0 ? 'positive' : 'negative'; }
+function fmtTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-CA') + ' ' + d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+}
+function fmtDuration(ms) {
+  const s = Math.floor(ms/1000), m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24);
+  if (d > 0) return d + 'd ' + (h%24) + 'h';
+  if (h > 0) return h + 'h ' + (m%60) + 'm';
+  return m + 'm';
+}
+
+async function fetchJson(url) {
+  try { const r = await fetch(url); return await r.json(); } catch { return null; }
+}
+
+function initCharts() {
+  const opts = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', maxTicksLimit: 8, font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    },
+  };
+  pnlChart = new Chart($('pnlChart'), { type: 'line', data: { labels: [], datasets: [{ data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 2 }] }, options: opts });
+  dailyChart = new Chart($('dailyChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: opts });
+}
+
+async function refresh() {
+  const [status, balance, pnlData, trades, positions, scores, stats] = await Promise.all([
+    fetchJson('/api/status'),
+    fetchJson('/api/balance'),
+    fetchJson('/api/daily-pnl?days=60'),
+    fetchJson('/api/trades?limit=30'),
+    fetchJson('/api/positions'),
+    fetchJson('/api/scores'),
+    fetchJson('/api/stats'),
+  ]);
+
+  // Header
+  if (status) {
+    $('statusDot').className = 'status-dot ' + (status.running ? 'on' : 'off');
+    $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
+  }
+
+  // Balance
+  if (balance) $('balance').textContent = '$' + Number(balance.balance).toFixed(2);
+
+  // PnL + Stats
+  if (stats) {
+    const el = $('totalPnl');
+    el.textContent = fmtUsd(stats.totalPnl);
+    el.className = 'card-value ' + pnlClass(stats.totalPnl);
+    $('winRate').textContent = stats.winRate + '%';
+    $('tradeCount').textContent = stats.wins + 'W / ' + stats.losses + 'L (' + stats.totalTrades + ' total)';
+  }
+
+  // LLM
+  if (status?.llm) {
+    $('llmCalls').textContent = status.llm.callsToday + ' / ' + status.llm.totalCalls;
+    $('llmCost').textContent = 'est. $' + status.llm.estimatedCostUsd.toFixed(3) + ' (' + status.llm.model + ')';
+  }
+
+  // Brain
+  if (status?.brain) {
+    const b = status.brain;
+    const regimeIcons = { trending_up: '📈', trending_down: '📉', range: '↔️', volatile: '⚡', unknown: '❓' };
+    $('brainRegime').textContent = (regimeIcons[b.regime] || '') + ' ' + b.regime;
+    $('brainDir').textContent = b.direction;
+    $('brainRisk').textContent = '🟢'.repeat(b.riskLevel) + '⚪'.repeat(5 - b.riskLevel) + ' ' + b.riskLevel + '/5';
+    $('brainConf').textContent = b.confidence + '%';
+    $('brainReasoning').textContent = b.reasoning || '';
+  }
+
+  // PnL Charts
+  if (pnlData && pnlData.length > 0) {
+    pnlChart.data.labels = pnlData.map(d => d.date.slice(5));
+    pnlChart.data.datasets[0].data = pnlData.map(d => d.cumulative);
+    pnlChart.update('none');
+
+    dailyChart.data.labels = pnlData.map(d => d.date.slice(5));
+    dailyChart.data.datasets[0].data = pnlData.map(d => d.pnl);
+    dailyChart.data.datasets[0].backgroundColor = pnlData.map(d => d.pnl >= 0 ? '#3fb950' : '#f85149');
+    dailyChart.update('none');
+  }
+
+  // Strategies
+  if (status?.strategies) {
+    $('strategies').innerHTML = status.strategies.map(s => {
+      const cls = s.status === 'running' ? 'strat-running' : s.status === 'paused' ? 'strat-paused' : 'strat-stopped';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <div><span class="strat-badge ${cls}">${s.status}</span> <b>${s.name}</b> <span style="color:var(--text2);font-size:11px">(${s.id})</span></div>
+        <span class="${Number(s.pnl) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmtUsd(s.pnl)}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Scores
+  if (scores && scores.length > 0) {
+    const maxScore = Math.max(15, ...scores.map(s => s.totalScore));
+    $('scores').innerHTML = scores.map(s => {
+      const pct = (s.totalScore / maxScore * 100).toFixed(0);
+      const color = s.totalScore >= 11 ? 'var(--red)' : s.totalScore >= 8 ? 'var(--orange)' : s.totalScore >= 5 ? 'var(--yellow)' : 'var(--text2)';
+      const dir = s.directionBias === 'long' ? '📈' : s.directionBias === 'short' ? '📉' : '➡️';
+      return `<div class="score-row">
+        <span class="score-symbol">${s.symbol}</span>
+        <div style="flex:1"><div class="score-bar" style="width:${pct}%;background:${color}"></div></div>
+        <span class="score-num">${s.totalScore}</span>
+        <span class="score-dir">${dir}</span>
+      </div>`;
+    }).join('');
+  } else {
+    $('scores').innerHTML = '<div style="color:var(--text2);padding:8px 0">No scores yet</div>';
+  }
+
+  // Positions
+  if (positions && positions.length > 0) {
+    $('positions').innerHTML = positions.map(p => `<tr>
+      <td><b>${p.symbol}</b></td>
+      <td class="${p.side === 'long' ? 'side-buy' : 'side-sell'}">${p.side.toUpperCase()}</td>
+      <td>${Number(p.size).toFixed(4)}</td>
+      <td>$${Number(p.entryPrice).toFixed(2)}</td>
+      <td>$${Number(p.markPrice).toFixed(2)}</td>
+      <td class="${Number(p.unrealizedPnl) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmtUsd(p.unrealizedPnl)}</td>
+      <td>${p.leverage}x</td>
+    </tr>`).join('');
+  } else {
+    $('positions').innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center">No open positions</td></tr>';
+  }
+
+  // Trades
+  if (trades && trades.length > 0) {
+    $('trades').innerHTML = trades.map(t => `<tr>
+      <td>${fmtTime(t.timestamp)}</td>
+      <td>${t.strategy_id}</td>
+      <td><b>${t.symbol}</b></td>
+      <td class="${t.side === 'buy' ? 'side-buy' : 'side-sell'}">${t.side.toUpperCase()}</td>
+      <td>$${Number(t.price).toFixed(2)}</td>
+      <td>${Number(t.size).toFixed(4)}</td>
+      <td class="${Number(t.pnl) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmtUsd(t.pnl)}</td>
+    </tr>`).join('');
+  } else {
+    $('trades').innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center">No trades yet</td></tr>';
+  }
+}
+
+initCharts();
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
