@@ -2,11 +2,12 @@ import { Decimal } from 'decimal.js';
 import { config } from '../config/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
 import { RiskManager } from './risk-manager.js';
+import { Brain } from './brain.js';
 import { getHyperliquidClient, type HyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { initTelegram, sendAlert, sendTradeAlert, stopTelegram } from '../monitoring/telegram.js';
 import { getDb, closeDb } from '../data/storage.js';
 import type { Strategy } from '../strategies/base.js';
-import type { EngineStatus } from './types.js';
+import type { EngineStatus, BrainConfig, TradeProposal, MarketSnapshot } from './types.js';
 
 const log = createChildLogger('engine');
 
@@ -14,13 +15,18 @@ export class TradingEngine {
   private strategies: Map<string, Strategy> = new Map();
   private riskManager: RiskManager;
   private hlClient: HyperliquidClient;
+  private brain: Brain;
   private running = false;
   private startTime = 0;
   private priceCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor() {
+  // Callbacks for Brain → Discretionary trade proposals
+  private onTradeProposal: ((proposal: TradeProposal, snapshot?: MarketSnapshot) => Promise<void>) | null = null;
+
+  constructor(brainConfig: BrainConfig) {
     this.riskManager = new RiskManager();
     this.hlClient = getHyperliquidClient();
+    this.brain = new Brain(brainConfig);
   }
 
   addStrategy(strategy: Strategy): void {
@@ -34,6 +40,15 @@ export class TradingEngine {
     });
 
     log.info({ id: strategy.id, name: strategy.name }, 'Strategy registered');
+  }
+
+  /** Set callback for when Brain produces trade proposals */
+  setTradeProposalHandler(handler: (proposal: TradeProposal, snapshot?: MarketSnapshot) => Promise<void>): void {
+    this.onTradeProposal = handler;
+  }
+
+  getBrain(): Brain {
+    return this.brain;
   }
 
   async start(): Promise<void> {
@@ -64,7 +79,7 @@ export class TradingEngine {
       stopAll: () => this.stop(),
     });
 
-    // Start all strategies
+    // Start all strategies with direct capital allocation
     const totalCapital = new Decimal(config.initialCapitalUsd);
     for (const [id, strategy] of this.strategies) {
       let capitalPct: number;
@@ -89,6 +104,31 @@ export class TradingEngine {
       }
     }
 
+    // Wire Brain events
+    this.brain.on('stateUpdate', (state) => {
+      // Propagate market state to all strategies
+      for (const strategy of this.strategies.values()) {
+        strategy.setMarketState(state);
+      }
+    });
+
+    this.brain.on('tradeProposal', (proposal: TradeProposal, snapshot?: MarketSnapshot) => {
+      if (this.onTradeProposal) {
+        this.onTradeProposal(proposal, snapshot).catch(err => {
+          log.error({ err }, 'Error handling trade proposal from Brain');
+        });
+      }
+    });
+
+    this.brain.on('alert', (msg: string) => {
+      sendAlert(msg).catch(err => {
+        log.error({ err }, 'Failed to send Brain alert');
+      });
+    });
+
+    // Start Brain (dual loops: 30min comprehensive + 5min urgent)
+    await this.brain.start();
+
     // Subscribe to price updates
     this.hlClient.subscribeToPrices((data) => {
       this.onPriceTick(data).catch((err) => {
@@ -106,7 +146,7 @@ export class TradingEngine {
     this.running = true;
     this.startTime = Date.now();
 
-    await sendAlert('🤖 <b>TradeBot Started</b>\n\nAll strategies initialized and running.');
+    await sendAlert('🤖 <b>TradeBot Started</b>\n\n🧠 Brain: 30min comprehensive + 5min urgent scan\nAll strategies initialized and running.');
     log.info('Trading engine started successfully');
   }
 
@@ -129,7 +169,6 @@ export class TradingEngine {
             log.warn({ reason: check.reason, signal: signal.symbol }, 'Signal rejected by risk manager');
             continue;
           }
-          // Execute the signal
           await this.executeSignal(signal);
         }
       } catch (err) {
@@ -140,7 +179,6 @@ export class TradingEngine {
 
   private async executeSignal(_signal: unknown): Promise<void> {
     // Grid bot handles its own orders; this is for future strategies
-    // that emit signals for the engine to execute
   }
 
   private async periodicCheck(): Promise<void> {
@@ -184,6 +222,9 @@ export class TradingEngine {
 
   async stop(): Promise<void> {
     log.info('Stopping trading engine...');
+
+    // Stop Brain first
+    this.brain.stop();
 
     if (this.priceCheckInterval) {
       clearInterval(this.priceCheckInterval);

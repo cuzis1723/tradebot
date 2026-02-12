@@ -6,8 +6,9 @@ import {
   defaultGridConfig,
   defaultDiscretionaryConfig,
   defaultMomentumConfig,
+  defaultBrainConfig,
 } from './config/strategies.js';
-import { setDiscretionaryStrategy } from './monitoring/telegram.js';
+import { setDiscretionaryStrategy, setBrain } from './monitoring/telegram.js';
 import { createChildLogger } from './monitoring/logger.js';
 
 const log = createChildLogger('main');
@@ -15,9 +16,10 @@ const log = createChildLogger('main');
 async function main(): Promise<void> {
   log.info('TradeBot starting...');
 
-  const engine = new TradingEngine();
+  // Engine now requires BrainConfig
+  const engine = new TradingEngine(defaultBrainConfig);
 
-  // Register all strategies
+  // Register strategies
   const gridStrategy = new GridStrategy(defaultGridConfig);
   engine.addStrategy(gridStrategy);
 
@@ -27,8 +29,17 @@ async function main(): Promise<void> {
   const discretionaryStrategy = new DiscretionaryStrategy(defaultDiscretionaryConfig);
   engine.addStrategy(discretionaryStrategy);
 
-  // Wire discretionary strategy to Telegram commands
+  // Wire Brain → Discretionary: Brain proposals go to Discretionary for execution
+  engine.setTradeProposalHandler(async (proposal, snapshot) => {
+    discretionaryStrategy.receiveProposal(proposal, snapshot);
+  });
+
+  // Wire Brain's position accessor so it can include positions in LLM context
+  engine.getBrain().setPositionAccessor(() => discretionaryStrategy.getPositions());
+
+  // Wire Discretionary + Brain to Telegram commands
   setDiscretionaryStrategy(discretionaryStrategy);
+  setBrain(engine.getBrain());
 
   // Graceful shutdown
   const shutdown = async () => {
@@ -47,7 +58,7 @@ async function main(): Promise<void> {
     log.error({ err }, 'Unhandled rejection');
   });
 
-  // Start the engine
+  // Start the engine (includes Brain startup)
   await engine.start();
 
   log.info('TradeBot is running. Press Ctrl+C to stop.');

@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { createChildLogger } from './logger.js';
 import { getTotalPnl, getRecentTrades } from '../data/storage.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
+import type { Brain } from '../core/brain.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
 
 const log = createChildLogger('telegram');
@@ -17,20 +18,32 @@ type EngineRef = {
 let bot: Bot | null = null;
 let engineRef: EngineRef | null = null;
 let discretionaryRef: DiscretionaryStrategy | null = null;
+let brainRef: Brain | null = null;
 
 export function setDiscretionaryStrategy(strategy: DiscretionaryStrategy): void {
   discretionaryRef = strategy;
 
   // Wire up callbacks so strategy can push messages to Telegram
-  strategy.onProposal = async (proposal: TradeProposal, snapshot: MarketSnapshot) => {
-    const marketMsg = strategy['analyzer'].formatSnapshot(snapshot);
-    const proposalMsg = strategy.formatProposal(proposal);
-    await sendAlert(`${marketMsg}\n\n${proposalMsg}`);
+  strategy.onProposal = async (proposal: TradeProposal, snapshot?: MarketSnapshot) => {
+    let msg = '';
+    if (snapshot) {
+      // Use Brain's analyzer to format the snapshot
+      const analyzer = brainRef?.getAnalyzer();
+      if (analyzer) {
+        msg = analyzer.formatSnapshot(snapshot) + '\n\n';
+      }
+    }
+    msg += strategy.formatProposal(proposal);
+    await sendAlert(msg);
   };
 
   strategy.onMessage = async (msg: string) => {
     await sendAlert(msg);
   };
+}
+
+export function setBrain(brain: Brain): void {
+  brainRef = brain;
 }
 
 export function initTelegram(engine: EngineRef): Bot | null {
@@ -92,23 +105,75 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await ctx.reply('All strategies stopped');
   });
 
-  // === Discretionary Trading Commands ===
+  // === Brain Commands ===
+
+  bot.command('brain', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const subcommand = ctx.message?.text?.split(' ')[1];
+    if (subcommand === 'refresh') {
+      await ctx.reply('Running comprehensive analysis...');
+      const result = await brainRef.forceComprehensive();
+      await sendLongMessage(ctx, result);
+    } else {
+      // Show current state
+      const state = brainRef.formatState();
+      await sendLongMessage(ctx, state);
+    }
+  });
 
   bot.command('market', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    if (!discretionaryRef) {
-      await ctx.reply('Discretionary strategy not active.');
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
       return;
     }
     await ctx.reply('Analyzing markets...');
-    const analysis = await discretionaryRef.handleMarketRequest();
-    await sendLongMessage(ctx, analysis);
+    const analyzer = brainRef.getAnalyzer();
+    const state = brainRef.getState();
+    if (state.latestSnapshots.length === 0) {
+      await ctx.reply('No market data available yet. Wait for next scan.');
+      return;
+    }
+    const parts = state.latestSnapshots.map(s => analyzer.formatSnapshot(s));
+    await sendLongMessage(ctx, parts.join('\n\n'));
   });
+
+  bot.command('score', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    await ctx.reply('Running urgent scan...');
+    const result = await brainRef.forceUrgentScan();
+    await sendLongMessage(ctx, result);
+  });
+
+  bot.command('cooldown', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const status = brainRef.getScorer().getCooldownStatus();
+    const state = brainRef.getState();
+    const extra = [
+      `\nBrain comprehensive: ${state.comprehensiveCount}/day`,
+      `Brain urgent LLM: ${state.urgentTriggerCount}/day`,
+    ].join('\n');
+    await ctx.reply(status + extra, { parse_mode: 'HTML' });
+  });
+
+  // === Discretionary Trading Commands ===
 
   bot.command('idea', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    if (!discretionaryRef) {
-      await ctx.reply('Discretionary strategy not active.');
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
       return;
     }
     const idea = ctx.message?.text?.replace(/^\/idea\s*/, '').trim();
@@ -117,8 +182,16 @@ export function initTelegram(engine: EngineRef): Bot | null {
       return;
     }
     await ctx.reply('Evaluating your idea...');
-    const response = await discretionaryRef.handleIdeaRequest(idea);
-    await sendLongMessage(ctx, response);
+    const advisor = brainRef.getAdvisor();
+    const state = brainRef.getState();
+    const result = await advisor.evaluateIdea(idea, state.latestSnapshots);
+    if (result.action === 'propose_trade' && result.proposal && discretionaryRef) {
+      const snapshot = state.latestSnapshots.find(s => s.symbol === result.proposal!.symbol);
+      discretionaryRef.receiveProposal(result.proposal, snapshot);
+      await sendLongMessage(ctx, discretionaryRef.formatProposal(result.proposal));
+    } else {
+      await sendLongMessage(ctx, result.content ?? 'No viable trade found for this idea.');
+    }
   });
 
   bot.command('approve', async (ctx: Context) => {
@@ -219,8 +292,8 @@ export function initTelegram(engine: EngineRef): Bot | null {
 
   bot.command('ask', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    if (!discretionaryRef) {
-      await ctx.reply('Discretionary strategy not active.');
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
       return;
     }
     const question = ctx.message?.text?.replace(/^\/ask\s*/, '').trim();
@@ -229,31 +302,10 @@ export function initTelegram(engine: EngineRef): Bot | null {
       return;
     }
     await ctx.reply('Thinking...');
-    const answer = await discretionaryRef.handleAskQuestion(question);
+    const advisor = brainRef.getAdvisor();
+    const state = brainRef.getState();
+    const answer = await advisor.askQuestion(question, state.latestSnapshots);
     await sendLongMessage(ctx, answer);
-  });
-
-  // === Scoring Commands (v2) ===
-
-  bot.command('score', async (ctx: Context) => {
-    if (!isAuthorized(ctx)) return;
-    if (!discretionaryRef) {
-      await ctx.reply('Discretionary strategy not active.');
-      return;
-    }
-    await ctx.reply('Scanning markets...');
-    const scoreReport = await discretionaryRef.handleScoreRequest();
-    await sendLongMessage(ctx, scoreReport);
-  });
-
-  bot.command('cooldown', async (ctx: Context) => {
-    if (!isAuthorized(ctx)) return;
-    if (!discretionaryRef) {
-      await ctx.reply('Discretionary strategy not active.');
-      return;
-    }
-    const status = discretionaryRef.handleCooldownRequest();
-    await ctx.reply(status, { parse_mode: 'HTML' });
   });
 
   // === Help ===
@@ -268,10 +320,13 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/pause &lt;id&gt; - Pause strategy\n'
       + '/resume &lt;id&gt; - Resume strategy\n'
       + '/stop - Stop all\n'
-      + '\n<b>Discretionary Trading:</b>\n'
-      + '/market - Market analysis\n'
-      + '/score - Trigger score scan\n'
+      + '\n<b>Brain (Central Intelligence):</b>\n'
+      + '/brain - Current market state &amp; directives\n'
+      + '/brain refresh - Force 30-min comprehensive analysis\n'
+      + '/market - Market snapshot (all symbols)\n'
+      + '/score - Force 5-min urgent scan\n'
       + '/cooldown - LLM cooldown status\n'
+      + '\n<b>Discretionary Trading:</b>\n'
       + '/idea &lt;text&gt; - Evaluate trade idea\n'
       + '/approve &lt;id&gt; - Approve proposal\n'
       + '/modify &lt;id&gt; size=N sl=N tp=N\n'
@@ -314,6 +369,13 @@ function formatStatus(status: unknown): string {
   msg += `Running: ${s.running ? 'Yes' : 'No'}\n`;
   msg += `Uptime: ${uptime}min\n`;
   msg += `Total PnL: <b>$${s.totalPnl}</b>\n\n`;
+
+  // Brain state
+  if (brainRef) {
+    const state = brainRef.getState();
+    msg += `<b>Brain:</b> ${state.regime} | ${state.direction} | risk ${state.riskLevel}/5\n\n`;
+  }
+
   msg += `<b>Strategies:</b>\n`;
   for (const strat of s.strategies) {
     const icon = strat.status === 'running' ? '🟢' : strat.status === 'paused' ? '🟡' : '🔴';

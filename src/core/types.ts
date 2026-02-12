@@ -253,3 +253,55 @@ export interface ScorerConfig {
   lossCooldownMs: number;        // 4 hours = 14_400_000
   maxConsecutiveLosses: number;  // 2
 }
+
+// === Brain Types (Central Intelligence) ===
+
+export type MarketRegime = 'trending_up' | 'trending_down' | 'range' | 'volatile' | 'unknown';
+export type MarketDirection = 'bullish' | 'bearish' | 'neutral';
+
+export interface BrainDirectives {
+  discretionary: {
+    active: boolean;
+    bias: 'long' | 'short' | 'neutral';
+    focusSymbols: string[];
+    maxLeverage: number;
+  };
+  momentum: {
+    active: boolean;
+    leverageMultiplier: number;   // 0.5x ~ 1.5x applied to base leverage
+    allowLong: boolean;
+    allowShort: boolean;
+  };
+}
+
+export interface MarketState {
+  // Core judgment (set by 30-min comprehensive LLM)
+  regime: MarketRegime;
+  direction: MarketDirection;
+  riskLevel: number;              // 1 (safe) ~ 5 (danger)
+  confidence: number;             // 0-100
+  reasoning: string;
+
+  // Strategy directives
+  directives: BrainDirectives;
+
+  // Latest data cache (shared across strategies)
+  latestSnapshots: MarketSnapshot[];
+  latestScores: TriggerScore[];
+
+  // Timing
+  updatedAt: number;
+  lastComprehensiveAt: number;
+  lastUrgentScanAt: number;
+  comprehensiveCount: number;     // daily count
+  urgentTriggerCount: number;     // daily count
+}
+
+export interface BrainConfig {
+  symbols: string[];
+  comprehensiveIntervalMs: number;   // 30 min = 1_800_000
+  urgentScanIntervalMs: number;      // 5 min = 300_000
+  maxDailyComprehensive: number;     // 48 (every 30 min)
+  maxDailyUrgentLLM: number;         // 12
+  scorer: ScorerConfig;
+}
