@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { MarketAnalyzer } from '../strategies/discretionary/analyzer.js';
 import { MarketScorer } from '../strategies/discretionary/scorer.js';
 import { LLMAdvisor } from '../strategies/discretionary/llm-advisor.js';
+import { InfoSourceAggregator } from '../data/sources/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
 import type {
   MarketState,
@@ -41,56 +42,6 @@ const DEFAULT_MARKET_STATE: MarketState = {
   urgentTriggerCount: 0,
 };
 
-// Separate system prompt for the 30-min comprehensive analysis
-const COMPREHENSIVE_SYSTEM_PROMPT = `You are the strategic brain of a crypto trading bot on Hyperliquid.
-
-## Your Role
-Every 30 minutes, you assess the overall market state and provide strategic directives.
-You are NOT making individual trade decisions here — you are setting the CONTEXT for strategies.
-
-## What You Assess
-1. **Market Regime**: Is the market trending up, trending down, ranging, or volatile?
-2. **Direction**: What is the dominant bias — bullish, bearish, or neutral?
-3. **Risk Level**: How dangerous is the current environment? (1=calm, 5=extreme)
-4. **Strategy Directives**: How should each strategy adjust its behavior?
-
-## Portfolio Context
-- Total capital: ~$1,000
-- Discretionary (55%): LLM-guided trades, semi-auto
-- Momentum (25%): EMA crossover auto-trading
-- Cash buffer (10%): Emergency reserves
-
-## Decision Framework
-- Trending market → Momentum gets higher leverage multiplier, Discretionary biased in trend direction
-- Ranging market → Momentum reduces leverage, Discretionary looks for reversals at S/R
-- Volatile/uncertain → Both reduce exposure, higher risk level
-- After consecutive losses → Increase risk level, reduce all leverage
-
-## Response Format
-ALWAYS respond with valid JSON only. No markdown.
-
-{
-  "regime": "trending_up|trending_down|range|volatile|unknown",
-  "direction": "bullish|bearish|neutral",
-  "risk_level": 1-5,
-  "confidence": 0-100,
-  "reasoning": "Brief explanation of your assessment",
-  "directives": {
-    "discretionary": {
-      "active": true,
-      "bias": "long|short|neutral",
-      "focus_symbols": ["ETH-PERP"],
-      "max_leverage": 10
-    },
-    "momentum": {
-      "active": true,
-      "leverage_multiplier": 1.2,
-      "allow_long": true,
-      "allow_short": false
-    }
-  }
-}`;
-
 /**
  * Brain: Central intelligence module that coordinates all strategies.
  *
@@ -107,6 +58,7 @@ export class Brain extends EventEmitter {
   private analyzer: MarketAnalyzer;
   private scorer: MarketScorer;
   private advisor: LLMAdvisor;
+  private infoSources: InfoSourceAggregator;
   private state: MarketState;
 
   private comprehensiveInterval: ReturnType<typeof setInterval> | null = null;
@@ -122,6 +74,7 @@ export class Brain extends EventEmitter {
     this.analyzer = new MarketAnalyzer();
     this.scorer = new MarketScorer(cfg.scorer);
     this.advisor = new LLMAdvisor();
+    this.infoSources = new InfoSourceAggregator();
     this.state = { ...DEFAULT_MARKET_STATE };
     this.dailyResetTime = this.getMidnightUTC();
   }
@@ -193,6 +146,11 @@ export class Brain extends EventEmitter {
     return this.advisor;
   }
 
+  /** Get info sources for Telegram commands */
+  getInfoSources(): InfoSourceAggregator {
+    return this.infoSources;
+  }
+
   // ========== 30-MIN COMPREHENSIVE ANALYSIS ==========
 
   async runComprehensiveAnalysis(): Promise<void> {
@@ -206,8 +164,15 @@ export class Brain extends EventEmitter {
 
     log.info('Running comprehensive analysis...');
 
-    // Step 1: Collect market data
-    const snapshots = await this.analyzer.analyzeMultiple(this.config.symbols);
+    // Step 1: Collect market data + info sources in parallel
+    const [snapshots, infoSignals] = await Promise.all([
+      this.analyzer.analyzeMultiple(this.config.symbols),
+      this.infoSources.fetchAll().catch(err => {
+        log.warn({ err }, 'Info sources fetch failed during comprehensive');
+        return this.infoSources.getLastSignals();
+      }),
+    ]);
+
     if (snapshots.length === 0) {
       log.warn('No market data for comprehensive analysis');
       return;
@@ -215,8 +180,9 @@ export class Brain extends EventEmitter {
 
     this.state.latestSnapshots = snapshots;
 
-    // Step 2: Also run scoring for context
-    this.state.latestScores = this.scorer.scoreAll(snapshots);
+    // Step 2: Run scoring with info source flags
+    const infoFlags = infoSignals?.triggerFlags ?? [];
+    this.state.latestScores = this.scorer.scoreAll(snapshots, infoFlags);
 
     // Step 3: Call LLM for regime assessment
     if (!this.advisor.isAvailable()) {
@@ -226,7 +192,7 @@ export class Brain extends EventEmitter {
     }
 
     try {
-      const context = this.buildComprehensiveContext(snapshots);
+      const context = this.buildComprehensiveContext(snapshots, infoSignals);
       const response = await this.advisor.comprehensiveAnalysis(context);
 
       if (response) {
@@ -273,15 +239,23 @@ export class Brain extends EventEmitter {
 
     log.debug('Running urgent scan...');
 
-    // Step 1: Fetch market data
-    const snapshots = await this.analyzer.analyzeMultiple(this.config.symbols);
+    // Step 1: Fetch market data + info sources in parallel
+    const [snapshots, infoSignals] = await Promise.all([
+      this.analyzer.analyzeMultiple(this.config.symbols),
+      this.infoSources.fetchAll().catch(err => {
+        log.debug({ err }, 'Info sources fetch failed during urgent scan');
+        return this.infoSources.getLastSignals();
+      }),
+    ]);
+
     if (snapshots.length === 0) return;
 
     this.state.latestSnapshots = snapshots;
     this.state.lastUrgentScanAt = now;
 
-    // Step 2: Score all symbols
-    const scores = this.scorer.scoreAll(snapshots);
+    // Step 2: Score all symbols with info source flags
+    const infoFlags = infoSignals?.triggerFlags ?? [];
+    const scores = this.scorer.scoreAll(snapshots, infoFlags);
     this.state.latestScores = scores;
 
     // Step 3: Process each score
@@ -344,7 +318,7 @@ export class Brain extends EventEmitter {
 
   // ========== Helpers ==========
 
-  private buildComprehensiveContext(snapshots: MarketSnapshot[]): string {
+  private buildComprehensiveContext(snapshots: MarketSnapshot[], infoSignals?: import('./types.js').InfoSignals | null): string {
     const marketData = snapshots.map(s => ({
       symbol: s.symbol,
       price: s.price,
@@ -396,6 +370,9 @@ export class Brain extends EventEmitter {
       confidence: this.state.confidence,
     };
 
+    // Info sources context
+    const infoContext = infoSignals ? this.infoSources.buildLLMContext() : 'External data sources not available.';
+
     return [
       `=== COMPREHENSIVE MARKET ANALYSIS (every 30min) ===`,
       '',
@@ -408,12 +385,16 @@ export class Brain extends EventEmitter {
       `=== TRIGGER SCORES (notable) ===`,
       JSON.stringify(scoreSummary, null, 2),
       '',
+      `=== EXTERNAL INTELLIGENCE ===`,
+      infoContext,
+      '',
       `=== OPEN POSITIONS ===`,
       typeof positionSummary === 'string' ? positionSummary : JSON.stringify(positionSummary, null, 2),
       '',
       `=== TASK ===`,
       `Assess the current market regime, direction, and risk level.`,
       `Provide strategic directives for each strategy.`,
+      `Factor in EXTERNAL INTELLIGENCE: prediction market probabilities, DeFi TVL flows, and trending sentiment.`,
       `Consider: Are we trending? Ranging? Is volatility expanding?`,
       `Should strategies be aggressive or defensive?`,
       `Respond with JSON only.`,
@@ -481,5 +462,3 @@ export class Brain extends EventEmitter {
     return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   }
 }
-
-export { COMPREHENSIVE_SYSTEM_PROMPT };

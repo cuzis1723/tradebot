@@ -1,4 +1,4 @@
-import type { MarketSnapshot, TriggerFlag, TriggerScore, CooldownState, ScorerConfig } from '../../core/types.js';
+import type { MarketSnapshot, TriggerFlag, TriggerScore, CooldownState, ScorerConfig, InfoTriggerFlag } from '../../core/types.js';
 
 const DEFAULT_SCORER_CONFIG: ScorerConfig = {
   scanIntervalMs: 5 * 60 * 1000,       // 5 min
@@ -240,12 +240,40 @@ export class MarketScorer {
   }
 
   // Score all symbols, return those above alertThreshold
-  scoreAll(snapshots: MarketSnapshot[]): TriggerScore[] {
+  // infoFlags are merged into the relevant symbol's score
+  scoreAll(snapshots: MarketSnapshot[], infoFlags?: InfoTriggerFlag[]): TriggerScore[] {
     const scores: TriggerScore[] = [];
 
     for (const snapshot of snapshots) {
       const prev = this.previousSnapshots.get(snapshot.symbol);
       const score = this.scoreSymbol(snapshot, prev, snapshots);
+
+      // Merge info source flags for this symbol
+      if (infoFlags && infoFlags.length > 0) {
+        const symbolInfoFlags = infoFlags.filter(f => f.relevantSymbol === snapshot.symbol);
+        for (const infoFlag of symbolInfoFlags) {
+          score.flags.push({
+            name: `info_${infoFlag.name}`,
+            category: 'cross', // info sources are cross-market signals
+            score: infoFlag.score,
+            direction: infoFlag.direction,
+            detail: `[${infoFlag.source}] ${infoFlag.detail}`,
+          });
+          score.totalScore += infoFlag.score;
+        }
+
+        // Recalculate direction bias after adding info flags
+        let longScore = 0;
+        let shortScore = 0;
+        for (const f of score.flags) {
+          if (f.direction === 'long') longScore += f.score;
+          if (f.direction === 'short') shortScore += f.score;
+        }
+        if (longScore > shortScore && longScore >= 3) score.directionBias = 'long';
+        else if (shortScore > longScore && shortScore >= 3) score.directionBias = 'short';
+        else score.directionBias = 'neutral';
+      }
+
       scores.push(score);
 
       // Update previous snapshot cache

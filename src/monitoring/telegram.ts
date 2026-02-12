@@ -2,6 +2,7 @@ import { Bot, type Context } from 'grammy';
 import { config } from '../config/index.js';
 import { createChildLogger } from './logger.js';
 import { getTotalPnl, getRecentTrades } from '../data/storage.js';
+import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
 import type { Brain } from '../core/brain.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
@@ -168,6 +169,97 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await ctx.reply(status + extra, { parse_mode: 'HTML' });
   });
 
+  bot.command('info', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const infoSources = brainRef.getInfoSources();
+    const subcommand = ctx.message?.text?.split(' ')[1];
+    if (subcommand === 'refresh') {
+      await ctx.reply('Fetching external data sources...');
+      await infoSources.fetchAll();
+    }
+    const formatted = infoSources.formatAll();
+    await sendLongMessage(ctx, formatted);
+  });
+
+  bot.command('balance', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hl = getHyperliquidClient();
+      const state = await hl.getAccountState();
+      const positions = state.assetPositions.filter(
+        ap => parseFloat(ap.position.szi) !== 0,
+      );
+
+      const accountValue = parseFloat(state.marginSummary.accountValue);
+      const marginUsed = parseFloat(state.marginSummary.totalMarginUsed);
+      const totalNtlPos = parseFloat(state.marginSummary.totalNtlPos);
+      const freeMargin = accountValue - marginUsed;
+
+      let msg = `<b>Account Balance</b>\n\n`;
+      msg += `Account Value: <b>$${accountValue.toFixed(2)}</b>\n`;
+      msg += `Margin Used: $${marginUsed.toFixed(2)}\n`;
+      msg += `Free Margin: $${freeMargin.toFixed(2)}\n`;
+      msg += `Notional Position: $${totalNtlPos.toFixed(2)}\n`;
+
+      if (positions.length > 0) {
+        msg += `\n<b>Open Positions (${positions.length}):</b>\n`;
+        for (const ap of positions) {
+          const p = ap.position;
+          const size = parseFloat(p.szi);
+          const side = size > 0 ? 'LONG' : 'SHORT';
+          const sideIcon = size > 0 ? '📈' : '📉';
+          const upnl = parseFloat(p.unrealizedPnl);
+          const upnlStr = upnl >= 0 ? `+$${upnl.toFixed(2)}` : `-$${Math.abs(upnl).toFixed(2)}`;
+          msg += `${sideIcon} ${p.coin}-PERP ${side} ${Math.abs(size)} @ $${parseFloat(p.entryPx).toFixed(2)} | uPnL: ${upnlStr}\n`;
+        }
+      } else {
+        msg += `\nNo open positions.`;
+      }
+
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    } catch (err) {
+      log.error({ err }, 'Balance fetch failed');
+      await ctx.reply('Failed to fetch account balance.');
+    }
+  });
+
+  bot.command('usage', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const advisor = brainRef.getAdvisor();
+    const stats = advisor.getUsageStats();
+    const brainState = brainRef.getState();
+
+    const lastCallAgo = stats.lastCallAt > 0
+      ? `${Math.floor((Date.now() - stats.lastCallAt) / 60_000)}min ago`
+      : 'never';
+
+    let msg = `<b>LLM Usage Stats</b>\n\n`;
+    msg += `Model: <b>${stats.model}</b>\n`;
+    msg += `\n<b>Today:</b>\n`;
+    msg += `  Calls: ${stats.callsToday}\n`;
+    msg += `  Tokens: ${stats.tokensToday.toLocaleString()}\n`;
+    msg += `\n<b>All-time (since restart):</b>\n`;
+    msg += `  Total Calls: ${stats.totalCalls}\n`;
+    msg += `  Input Tokens: ${stats.totalInputTokens.toLocaleString()}\n`;
+    msg += `  Output Tokens: ${stats.totalOutputTokens.toLocaleString()}\n`;
+    msg += `  Total Tokens: ${stats.totalTokens.toLocaleString()}\n`;
+    msg += `  Est. Cost: <b>$${stats.estimatedCostUsd.toFixed(4)}</b>\n`;
+    msg += `  Last Call: ${lastCallAgo}\n`;
+    msg += `\n<b>Brain Counters (daily):</b>\n`;
+    msg += `  Comprehensive: ${brainState.comprehensiveCount}\n`;
+    msg += `  Urgent LLM: ${brainState.urgentTriggerCount}\n`;
+
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+  });
+
   // === Discretionary Trading Commands ===
 
   bot.command('idea', async (ctx: Context) => {
@@ -326,6 +418,10 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/market - Market snapshot (all symbols)\n'
       + '/score - Force 5-min urgent scan\n'
       + '/cooldown - LLM cooldown status\n'
+      + '/info - External intelligence (Polymarket, DeFi TVL, Trending)\n'
+      + '/info refresh - Force re-fetch all sources\n'
+      + '/balance - Account balance &amp; positions\n'
+      + '/usage - LLM token usage &amp; cost\n'
       + '\n<b>Discretionary Trading:</b>\n'
       + '/idea &lt;text&gt; - Evaluate trade idea\n'
       + '/approve &lt;id&gt; - Approve proposal\n'
