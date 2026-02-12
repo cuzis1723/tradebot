@@ -68,7 +68,26 @@ export function initTelegram(engine: EngineRef): Bot | null {
     if (!isAuthorized(ctx)) return;
     const totalPnl = getTotalPnl();
     const trades = getRecentTrades(5);
-    let msg = `<b>PnL Summary</b>\n\nTotal PnL: <b>$${totalPnl.toFixed(2)}</b>\n\n`;
+
+    // Fetch unrealized PnL from open positions
+    let unrealizedPnl = 0;
+    let positionCount = 0;
+    try {
+      const hl = getHyperliquidClient();
+      const state = await hl.getAccountState();
+      const positions = state.assetPositions.filter(
+        ap => parseFloat(ap.position.szi) !== 0,
+      );
+      positionCount = positions.length;
+      unrealizedPnl = positions.reduce((sum, ap) => sum + parseFloat(ap.position.unrealizedPnl), 0);
+    } catch {
+      // Silently skip if fetch fails
+    }
+
+    let msg = `<b>PnL Summary</b>\n\n`;
+    msg += `Realized PnL: <b>$${totalPnl.toFixed(2)}</b>\n`;
+    msg += `Unrealized PnL: <b>${unrealizedPnl >= 0 ? '+' : ''}$${unrealizedPnl.toFixed(2)}</b> (${positionCount} positions)\n`;
+    msg += `Combined: <b>${(totalPnl + unrealizedPnl) >= 0 ? '+' : ''}$${(totalPnl + unrealizedPnl).toFixed(2)}</b>\n\n`;
     msg += '<b>Recent Trades:</b>\n';
     for (const trade of trades as Array<{ strategy_id: string; symbol: string; side: string; pnl: number; price: number }>) {
       const pnlStr = trade.pnl >= 0 ? `+$${trade.pnl.toFixed(2)}` : `-$${Math.abs(trade.pnl).toFixed(2)}`;
@@ -700,6 +719,14 @@ export function initTelegram(engine: EngineRef): Bot | null {
     }
   });
 
+  // === Dashboard ===
+
+  bot.command('dashboard', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    const url = config.dashboardUrl ?? `http://localhost:${config.dashboardPort}`;
+    await ctx.reply(`<b>Web Dashboard</b>\n\n<a href="${url}">${url}</a>`, { parse_mode: 'HTML' });
+  });
+
   // === Help ===
 
   bot.command('help', async (ctx: Context) => {
@@ -743,6 +770,8 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/close &lt;symbol&gt; - Close position\n'
       + '/ask &lt;question&gt; - Ask about market\n'
       + '/do &lt;command&gt; - LLM executes directly (transfer, trade, etc)\n'
+      + '\n<b>Dashboard:</b>\n'
+      + '/dashboard - Web dashboard link\n'
       + '\n/help - This message',
       { parse_mode: 'HTML' }
     );
