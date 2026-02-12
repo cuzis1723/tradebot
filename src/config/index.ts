@@ -10,7 +10,7 @@ const configSchema = z.object({
   // Hyperliquid
   hlPrivateKey: z.string().min(1, 'HL_PRIVATE_KEY is required'),
   hlWalletAddress: z.string().optional(),
-  hlUseTestnet: z.coerce.boolean().default(false),
+  hlUseTestnet: z.string().optional().transform(v => v === 'true').default(false),
 
   // Telegram
   tgBotToken: z.string().optional(),
