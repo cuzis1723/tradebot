@@ -117,11 +117,16 @@ For answering user questions:
 const SKILLS_SYSTEM_PROMPT = `You are the autonomous trading agent of a crypto perpetual futures bot on Hyperliquid.
 You have DIRECT ACCESS to the exchange via tools. You can check balances, place/close orders, and manage positions.
 
+## CRITICAL: EXECUTE, DON'T ASK
+- When the user tells you to trade, EXECUTE the trade immediately using tools. Do NOT ask "Should I proceed?" or "Confirm Y/N".
+- The user already confirmed by sending the command. Just do it and report the result.
+- When the user says "Y", "yes", "go", "execute", "do it" — execute the most recent proposed action immediately.
+- Only ask for clarification if the command is genuinely ambiguous (e.g., missing symbol or direction).
+
 ## Hyperliquid Unified Account
-- Spot and Perp share a SINGLE unified balance. Spot USDC is automatically used as perp margin.
-- There is NO need to transfer USDC between Spot and Perp wallets.
-- get_balance shows the unified account value (Spot + Perp combined).
-- get_spot_holdings only shows non-USDC token holdings (e.g. HYPE, PURR).
+- Spot USDC IS your total capital. Perp margin is drawn from spot USDC automatically.
+- get_balance returns your total balance (spot USDC). This is the real number.
+- No transfers needed between spot/perp.
 
 ## Portfolio
 - Total capital: Check real balance using get_balance tool before any trading decision
@@ -134,12 +139,11 @@ You have DIRECT ACCESS to the exchange via tools. You can check balances, place/
 - Max 25% of allocated capital per trade
 - Max drawdown: 20% hard stop
 
-## Execution Guidelines
-1. Before trading: Check balance with get_balance to see available margin.
-2. Before opening: Set leverage for the symbol first.
-3. Use market_open for positions, place_limit_order for precise entries.
-4. Always report what you did clearly.
-5. If something fails, explain the error and suggest what to do.
+## Execution Flow
+1. Check balance with get_balance
+2. Set leverage with set_leverage
+3. Execute with market_open or place_limit_order
+4. Report what you did clearly (entry price, size, leverage, rationale)
 
 ## Important
 - You are operating with REAL MONEY. Be careful and precise.
@@ -170,7 +174,9 @@ const PRICING: Record<string, { input: number; output: number }> = {
 export class LLMAdvisor {
   private client: Anthropic | null = null;
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private skillsHistory: Anthropic.MessageParam[] = [];
   private maxHistoryLength = 20;
+  private maxSkillsHistoryLength = 10;
 
   // Token usage tracking
   private usage: LLMUsageStats;
@@ -314,9 +320,16 @@ export class LLMAdvisor {
   async chatWithTools(userMessage: string, systemOverride?: string): Promise<string> {
     if (!this.client) throw new Error('LLM advisor not available');
 
-    const messages: Anthropic.MessageParam[] = [
-      { role: 'user', content: userMessage },
-    ];
+    // Carry over previous skills conversation for context continuity
+    this.skillsHistory.push({ role: 'user', content: userMessage });
+
+    // Trim history if too long (keep recent exchanges)
+    while (this.skillsHistory.length > this.maxSkillsHistoryLength * 2) {
+      this.skillsHistory.shift();
+    }
+
+    // Use a working copy that includes history
+    const messages: Anthropic.MessageParam[] = [...this.skillsHistory];
 
     const maxRounds = 10; // prevent infinite loops
     let finalText = '';
@@ -383,7 +396,17 @@ export class LLMAdvisor {
       }
     }
 
+    // Save the final assistant response to skills history for continuity
+    if (finalText) {
+      this.skillsHistory.push({ role: 'assistant', content: finalText });
+    }
+
     return finalText || '(No response from LLM)';
+  }
+
+  /** Clear skills conversation history */
+  clearSkillsHistory(): void {
+    this.skillsHistory = [];
   }
 
   /**
