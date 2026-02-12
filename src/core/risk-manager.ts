@@ -1,6 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { config } from '../config/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
+import { saveStrategyState, loadStrategyState } from '../data/storage.js';
 import type { TradeSignal, RiskCheckResult, RiskLimits } from './types.js';
 import type { Strategy } from '../strategies/base.js';
 
@@ -20,6 +21,7 @@ export class RiskManager {
       maxOpenPositions: limits?.maxOpenPositions ?? 20,
       maxLeverage: limits?.maxLeverage ?? 15,
     };
+    this.restorePeakValue();
   }
 
   checkSignal(signal: TradeSignal, strategy: Strategy): RiskCheckResult {
@@ -66,7 +68,26 @@ export class RiskManager {
     this.currentPortfolioValue = value;
     if (value.greaterThan(this.peakPortfolioValue)) {
       this.peakPortfolioValue = value;
+      this.persistPeakValue();
     }
+  }
+
+  persistPeakValue(): void {
+    try {
+      saveStrategyState('__risk_manager__', {
+        peakPortfolioValue: this.peakPortfolioValue.toString(),
+      });
+    } catch {}
+  }
+
+  restorePeakValue(): void {
+    try {
+      const state = loadStrategyState<{ peakPortfolioValue: string }>('__risk_manager__');
+      if (state?.peakPortfolioValue) {
+        this.peakPortfolioValue = new Decimal(state.peakPortfolioValue);
+        log.info({ peak: this.peakPortfolioValue.toString() }, 'Peak portfolio value restored');
+      }
+    } catch {}
   }
 
   checkGlobalDrawdown(): RiskCheckResult & { drawdownPct?: number; level?: 'normal' | 'warning' | 'critical' } {

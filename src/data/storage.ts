@@ -61,10 +61,74 @@ function initSchema(database: Database.Database): void {
       UNIQUE(strategy_id, date)
     );
 
+    CREATE TABLE IF NOT EXISTS llm_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      response TEXT NOT NULL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cost_usd REAL DEFAULT 0,
+      model TEXT,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS brain_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL,
+      regime TEXT,
+      direction TEXT,
+      risk_level INTEGER,
+      confidence INTEGER,
+      reasoning TEXT,
+      directives_json TEXT,
+      trigger_symbol TEXT,
+      trigger_score INTEGER,
+      had_trade INTEGER DEFAULT 0,
+      proposal_id INTEGER,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS trade_proposals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      proposal_uuid TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      entry_price REAL,
+      stop_loss REAL,
+      take_profit REAL,
+      leverage INTEGER,
+      confidence TEXT,
+      rationale TEXT,
+      status TEXT DEFAULT 'pending',
+      brain_decision_id INTEGER,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS llm_usage_daily (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL UNIQUE,
+      total_calls INTEGER DEFAULT 0,
+      total_input_tokens INTEGER DEFAULT 0,
+      total_output_tokens INTEGER DEFAULT 0,
+      total_cost_usd REAL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy_id);
     CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
     CREATE INDEX IF NOT EXISTS idx_grid_orders_strategy ON grid_orders(strategy_id);
     CREATE INDEX IF NOT EXISTS idx_daily_pnl_date ON daily_pnl(date);
+    CREATE INDEX IF NOT EXISTS idx_llm_logs_timestamp ON llm_logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_llm_logs_type ON llm_logs(type);
+    CREATE INDEX IF NOT EXISTS idx_brain_decisions_timestamp ON brain_decisions(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_brain_decisions_type ON brain_decisions(type);
+    CREATE INDEX IF NOT EXISTS idx_trade_proposals_timestamp ON trade_proposals(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_trade_proposals_status ON trade_proposals(status);
   `);
 }
 
@@ -128,6 +192,146 @@ export function getRecentTrades(limit: number = 10, strategyId?: string): unknow
     return database.prepare('SELECT * FROM trades WHERE strategy_id = ? ORDER BY timestamp DESC LIMIT ?').all(strategyId, limit);
   }
   return database.prepare('SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?').all(limit);
+}
+
+export function logLLMCall(
+  type: string,
+  prompt: string,
+  response: string,
+  inputTokens: number,
+  outputTokens: number,
+  costUsd: number,
+  model?: string,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO llm_logs (type, prompt, response, input_tokens, output_tokens, cost_usd, model, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(type, prompt, response, inputTokens, outputTokens, costUsd, model ?? null, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function logBrainDecision(
+  type: string,
+  regime: string | null,
+  direction: string | null,
+  riskLevel: number | null,
+  confidence: number | null,
+  reasoning: string | null,
+  directivesJson: string | null,
+  triggerSymbol?: string,
+  triggerScore?: number,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO brain_decisions (type, regime, direction, risk_level, confidence, reasoning, directives_json, trigger_symbol, trigger_score, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(type, regime, direction, riskLevel, confidence, reasoning, directivesJson, triggerSymbol ?? null, triggerScore ?? null, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function updateBrainDecisionTrade(decisionId: number, proposalId: number): void {
+  const database = getDb();
+  database.prepare(`
+    UPDATE brain_decisions SET had_trade = 1, proposal_id = ? WHERE id = ?
+  `).run(proposalId, decisionId);
+}
+
+export function logTradeProposal(
+  proposalUuid: string,
+  symbol: string,
+  side: string,
+  entryPrice: number,
+  stopLoss: number,
+  takeProfit: number,
+  leverage: number,
+  confidence: string,
+  rationale: string,
+  status: string,
+  brainDecisionId?: number,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO trade_proposals (proposal_uuid, symbol, side, entry_price, stop_loss, take_profit, leverage, confidence, rationale, status, brain_decision_id, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(proposalUuid, symbol, side, entryPrice, stopLoss, takeProfit, leverage, confidence, rationale, status, brainDecisionId ?? null, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function updateTradeProposalStatus(proposalUuid: string, status: string): void {
+  const database = getDb();
+  database.prepare(`
+    UPDATE trade_proposals SET status = ? WHERE proposal_uuid = ?
+  `).run(status, proposalUuid);
+}
+
+export function getRecentDecisions(limit: number = 50): unknown[] {
+  const database = getDb();
+  return database.prepare(`
+    SELECT bd.*, tp.symbol as trade_symbol, tp.side as trade_side, tp.status as trade_status
+    FROM brain_decisions bd
+    LEFT JOIN trade_proposals tp ON bd.proposal_id = tp.id
+    ORDER BY bd.timestamp DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+export function getRecentLLMCalls(limit: number = 50): unknown[] {
+  const database = getDb();
+  return database.prepare(`
+    SELECT id, type, input_tokens, output_tokens, cost_usd, model, timestamp
+    FROM llm_logs
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(limit);
+}
+
+export function getRecentTradeProposals(limit: number = 50): unknown[] {
+  const database = getDb();
+  return database.prepare(`
+    SELECT * FROM trade_proposals ORDER BY timestamp DESC LIMIT ?
+  `).all(limit);
+}
+
+export function updateLLMUsageDaily(calls: number, inputTokens: number, outputTokens: number, costUsd: number): void {
+  const database = getDb();
+  const date = new Date().toISOString().split('T')[0];
+  database.prepare(`
+    INSERT INTO llm_usage_daily (date, total_calls, total_input_tokens, total_output_tokens, total_cost_usd)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(date) DO UPDATE SET
+      total_calls = total_calls + excluded.total_calls,
+      total_input_tokens = total_input_tokens + excluded.total_input_tokens,
+      total_output_tokens = total_output_tokens + excluded.total_output_tokens,
+      total_cost_usd = total_cost_usd + excluded.total_cost_usd,
+      updated_at = datetime('now')
+  `).run(date, calls, inputTokens, outputTokens, costUsd);
+}
+
+export function getLLMUsageTotals(): { totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } {
+  const database = getDb();
+  const row = database.prepare(`
+    SELECT COALESCE(SUM(total_calls), 0) as totalCalls,
+           COALESCE(SUM(total_input_tokens), 0) as totalInputTokens,
+           COALESCE(SUM(total_output_tokens), 0) as totalOutputTokens,
+           COALESCE(SUM(total_cost_usd), 0) as totalCostUsd
+    FROM llm_usage_daily
+  `).get() as { totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number };
+  return row;
+}
+
+export function getLLMUsageToday(): { totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } {
+  const database = getDb();
+  const date = new Date().toISOString().split('T')[0];
+  const row = database.prepare(`
+    SELECT COALESCE(total_calls, 0) as totalCalls,
+           COALESCE(total_input_tokens, 0) as totalInputTokens,
+           COALESCE(total_output_tokens, 0) as totalOutputTokens,
+           COALESCE(total_cost_usd, 0) as totalCostUsd
+    FROM llm_usage_daily
+    WHERE date = ?
+  `).get(date) as { totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } | undefined;
+  return row ?? { totalCalls: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCostUsd: 0 };
 }
 
 export function closeDb(): void {

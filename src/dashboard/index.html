@@ -66,6 +66,22 @@
   .strat-stopped { background: rgba(248,81,73,0.15); color: var(--red); }
 
   .section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; margin-top: 8px; }
+
+  .decision-feed { max-height: 600px; overflow-y: auto; }
+  .decision-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; transition: border-color 0.2s; }
+  .decision-card.has-trade { border-left: 3px solid var(--green); background: rgba(63,185,80,0.04); }
+  .decision-card.no-trade { border-left: 3px solid var(--border); }
+  .decision-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .decision-type { font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
+  .decision-type.comprehensive { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .decision-type.urgent { background: rgba(248,81,73,0.15); color: var(--red); }
+  .decision-time { font-size: 11px; color: var(--text2); }
+  .decision-meta { display: flex; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+  .decision-meta-item { font-size: 12px; }
+  .decision-meta-label { color: var(--text2); }
+  .decision-reasoning { font-size: 12px; color: var(--text); line-height: 1.5; margin-top: 6px; }
+  .decision-trade-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; background: rgba(63,185,80,0.15); color: var(--green); margin-top: 6px; }
+  .decision-trade-badge.sell { background: rgba(248,81,73,0.15); color: var(--red); }
 </style>
 </head>
 <body>
@@ -112,6 +128,17 @@
       <div class="brain-item"><div class="brain-label">Confidence</div><div class="brain-val" id="brainConf">-</div></div>
     </div>
     <div class="card-sub" id="brainReasoning" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- Decision Feed -->
+  <div class="card" style="margin-bottom:12px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div class="section-title" style="margin:0;">Decision Feed</div>
+      <span class="refresh-info" id="decisionCount"></span>
+    </div>
+    <div class="decision-feed" id="decisionFeed">
+      <div style="color:var(--text2);padding:8px 0">Loading decisions...</div>
+    </div>
   </div>
 
   <!-- Charts -->
@@ -195,7 +222,7 @@ function initCharts() {
 }
 
 async function refresh() {
-  const [status, balance, pnlData, trades, positions, scores, stats] = await Promise.all([
+  const [status, balance, pnlData, trades, positions, scores, stats, decisions] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/balance'),
     fetchJson('/api/daily-pnl?days=60'),
@@ -203,6 +230,7 @@ async function refresh() {
     fetchJson('/api/positions'),
     fetchJson('/api/scores'),
     fetchJson('/api/stats'),
+    fetchJson('/api/decisions?limit=30'),
   ]);
 
   // Header
@@ -241,6 +269,54 @@ async function refresh() {
     $('brainRisk').textContent = '🟢'.repeat(b.riskLevel) + '⚪'.repeat(5 - b.riskLevel) + ' ' + b.riskLevel + '/5';
     $('brainConf').textContent = b.confidence + '%';
     $('brainReasoning').textContent = b.reasoning || '';
+  }
+
+  // Decision Feed
+  if (decisions && decisions.length > 0) {
+    $('decisionCount').textContent = decisions.length + ' recent decisions';
+    $('decisionFeed').innerHTML = decisions.map(d => {
+      const time = fmtTime(d.timestamp);
+      const isUrgent = d.type === 'urgent_trigger';
+      const hasTrade = d.had_trade === 1;
+      const typeClass = isUrgent ? 'urgent' : 'comprehensive';
+      const cardClass = hasTrade ? 'has-trade' : 'no-trade';
+
+      let metaHtml = '';
+      if (d.regime) {
+        const regimeIcons = { trending_up: '📈', trending_down: '📉', range: '↔️', volatile: '⚡', unknown: '❓' };
+        metaHtml += `<span class="decision-meta-item"><span class="decision-meta-label">Regime:</span> ${regimeIcons[d.regime] || ''} ${d.regime}</span>`;
+      }
+      if (d.direction) {
+        metaHtml += `<span class="decision-meta-item"><span class="decision-meta-label">Dir:</span> ${d.direction}</span>`;
+      }
+      if (d.confidence) {
+        metaHtml += `<span class="decision-meta-item"><span class="decision-meta-label">Conf:</span> ${d.confidence}%</span>`;
+      }
+      if (d.risk_level) {
+        metaHtml += `<span class="decision-meta-item"><span class="decision-meta-label">Risk:</span> ${'🟢'.repeat(d.risk_level)}${'⚪'.repeat(5-d.risk_level)}</span>`;
+      }
+      if (isUrgent && d.trigger_symbol) {
+        metaHtml += `<span class="decision-meta-item"><span class="decision-meta-label">Trigger:</span> <b>${d.trigger_symbol}</b> (score: ${d.trigger_score})</span>`;
+      }
+
+      let tradeHtml = '';
+      if (hasTrade && d.trade_symbol) {
+        const sideClass = d.trade_side === 'sell' ? 'sell' : '';
+        tradeHtml = `<div><span class="decision-trade-badge ${sideClass}">${d.trade_side?.toUpperCase()} ${d.trade_symbol} (${d.trade_status})</span></div>`;
+      }
+
+      return `<div class="decision-card ${cardClass}">
+        <div class="decision-header">
+          <span class="decision-type ${typeClass}">${isUrgent ? '⚡ Urgent Trigger' : '🧠 Comprehensive'}</span>
+          <span class="decision-time">${time}</span>
+        </div>
+        <div class="decision-meta">${metaHtml}</div>
+        <div class="decision-reasoning">${d.reasoning || 'No reasoning recorded'}</div>
+        ${tradeHtml}
+      </div>`;
+    }).join('');
+  } else {
+    $('decisionFeed').innerHTML = '<div style="color:var(--text2);padding:8px 0">No decisions yet</div>';
   }
 
   // PnL Charts

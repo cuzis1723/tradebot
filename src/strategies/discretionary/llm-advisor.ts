@@ -4,6 +4,7 @@ import { createChildLogger } from '../../monitoring/logger.js';
 import { TRADING_TOOLS, executeToolCall } from '../../core/llm-skills.js';
 import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore, MarketRegime, MarketDirection, BrainDirectives } from '../../core/types.js';
 import { randomUUID } from 'crypto';
+import { logLLMCall, updateLLMUsageDaily, getLLMUsageTotals, getLLMUsageToday } from '../../data/storage.js';
 
 const log = createChildLogger('llm-advisor');
 
@@ -20,7 +21,7 @@ export interface ComprehensiveResponse {
 const SYSTEM_PROMPT = `You are the core decision engine of an automated crypto perpetual futures trading bot on Hyperliquid.
 
 ## Context
-- Capital: ~$550 allocated to this strategy (55% of $1,000 total portfolio)
+- Capital: Dynamically allocated based on current portfolio balance
 - Target: 15-30% monthly return, max 20% drawdown
 - Style: Aggressive on high-probability setups, patient otherwise
 - Frequency: 10-20 trades/month (quality over quantity)
@@ -123,8 +124,8 @@ You have DIRECT ACCESS to the exchange via tools. You can check balances, place/
 - get_spot_holdings only shows non-USDC token holdings (e.g. HYPE, PURR).
 
 ## Portfolio
-- Total capital: ~$1,000
-- Discretionary: 55% ($550), Momentum: 25% ($250), Cash buffer: 10% ($100)
+- Total capital: Check real balance using get_balance tool before any trading decision
+- Discretionary: 55%, Momentum: 25%, Cash buffer: 10% (percentages of actual balance)
 
 ## Risk Rules (ALWAYS follow)
 - Max leverage: 15x (only with highest conviction)
@@ -200,6 +201,28 @@ export class LLMAdvisor {
     return this.client !== null;
   }
 
+  private buildBalanceContext(balance?: number): string {
+    if (!balance) return '';
+    return `\n## Current Portfolio Balance\n- Total account value: $${balance.toFixed(2)}\n- Discretionary (55%): ~$${(balance * 0.55).toFixed(2)}\n- Available for new trades: Check positions below\n`;
+  }
+
+  async init(): Promise<void> {
+    try {
+      const totals = getLLMUsageTotals();
+      const today = getLLMUsageToday();
+      this.usage.totalCalls = totals.totalCalls;
+      this.usage.totalInputTokens = totals.totalInputTokens;
+      this.usage.totalOutputTokens = totals.totalOutputTokens;
+      this.usage.totalTokens = totals.totalInputTokens + totals.totalOutputTokens;
+      this.usage.estimatedCostUsd = totals.totalCostUsd;
+      this.usage.callsToday = today.totalCalls;
+      this.usage.tokensToday = today.totalInputTokens + today.totalOutputTokens;
+      log.info({ totalCalls: totals.totalCalls, costUsd: totals.totalCostUsd.toFixed(3) }, 'LLM usage restored from DB');
+    } catch (e) {
+      log.warn({ err: e }, 'Failed to restore LLM usage from DB');
+    }
+  }
+
   /** Get current usage stats */
   getUsageStats(): Readonly<LLMUsageStats> {
     this.resetDailyIfNeeded();
@@ -221,6 +244,13 @@ export class LLMAdvisor {
     const inputCost = (inputTokens / 1_000_000) * pricing.input;
     const outputCost = (outputTokens / 1_000_000) * pricing.output;
     this.usage.estimatedCostUsd += inputCost + outputCost;
+
+    // Persist to database
+    try {
+      updateLLMUsageDaily(1, inputTokens, outputTokens, inputCost + outputCost);
+    } catch (e) {
+      log.warn({ err: e }, 'Failed to persist LLM usage stats');
+    }
   }
 
   private resetDailyIfNeeded(): void {
@@ -262,6 +292,12 @@ export class LLMAdvisor {
 
       const assistantMessage = response.content[0].type === 'text' ? response.content[0].text : '';
       this.conversationHistory.push({ role: 'assistant', content: assistantMessage });
+
+      try {
+        logLLMCall('chat', userMessage, assistantMessage, response.usage?.input_tokens ?? 0, response.usage?.output_tokens ?? 0, 0, config.anthropicModel);
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log LLM call');
+      }
 
       return assistantMessage;
     } catch (err) {
@@ -411,6 +447,7 @@ export class LLMAdvisor {
     triggerScore: TriggerScore,
     openPositions?: ActiveDiscretionaryPosition[],
     infoContext?: string,
+    balance?: number,
   ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
     const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
     if (!targetSnapshot) {
@@ -487,6 +524,11 @@ export class LLMAdvisor {
       JSON.stringify(marketData, null, 2),
       '',
     ];
+
+    // Add balance context if available
+    if (balance !== undefined) {
+      promptParts.splice(1, 0, this.buildBalanceContext(balance));
+    }
 
     // Include external intelligence if available
     if (infoContext) {
@@ -625,7 +667,7 @@ export class LLMAdvisor {
    * Comprehensive market analysis for the Brain's 30-min cycle.
    * Uses a separate conversation (doesn't pollute trade history).
    */
-  async comprehensiveAnalysis(context: string): Promise<ComprehensiveResponse | null> {
+  async comprehensiveAnalysis(context: string, balance?: number): Promise<ComprehensiveResponse | null> {
     if (!this.client) throw new Error('LLM advisor not available');
 
     const COMPREHENSIVE_SYSTEM_PROMPT = `You are the strategic brain of a crypto trading bot on Hyperliquid.
@@ -647,7 +689,8 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
 - DefiLlama: DeFi TVL capital flows across chains
 - CoinGecko: Trending coins showing retail sentiment
 
-## Portfolio: ~$1,000 total
+## Portfolio
+- Use the actual balance data provided in the context below
 - Discretionary (55%): LLM-guided, semi-auto
 - Momentum (25%): EMA crossover, auto
 - Cash (10%): reserves
@@ -665,12 +708,16 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
   }
 }`;
 
+    const contextWithBalance = balance !== undefined
+      ? `${this.buildBalanceContext(balance)}\n${context}`
+      : context;
+
     try {
       const response = await this.client.messages.create({
         model: config.anthropicModel,
         max_tokens: 512,
         system: COMPREHENSIVE_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: context }],
+        messages: [{ role: 'user', content: contextWithBalance }],
       });
 
       // Track token usage
@@ -679,6 +726,13 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
       }
 
       const text = response.content[0].type === 'text' ? response.content[0].text : '';
+
+      try {
+        logLLMCall('comprehensive', contextWithBalance, text, response.usage?.input_tokens ?? 0, response.usage?.output_tokens ?? 0, 0, config.anthropicModel);
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log LLM call');
+      }
+
       return this.parseComprehensiveResponse(text);
     } catch (err) {
       log.error({ err }, 'Comprehensive LLM call failed');

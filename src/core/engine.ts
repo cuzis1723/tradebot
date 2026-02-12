@@ -119,6 +119,16 @@ export class TradingEngine {
       });
     });
 
+    // Wire balance accessor to Brain for dynamic balance in LLM prompts
+    this.brain.setBalanceAccessor(async () => {
+      try {
+        const bal = await this.hlClient.getBalance();
+        return bal.toNumber();
+      } catch {
+        return 0;
+      }
+    });
+
     // Start Brain (dual loops: 30min comprehensive + 5min urgent)
     await this.brain.start();
 

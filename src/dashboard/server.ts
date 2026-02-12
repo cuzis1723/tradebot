@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChildLogger } from '../monitoring/logger.js';
-import { getDb } from '../data/storage.js';
+import { getDb, getRecentDecisions, getRecentTradeProposals } from '../data/storage.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { EngineStatus } from '../core/types.js';
 import type { Brain } from '../core/brain.js';
@@ -196,6 +196,32 @@ function apiTradeStats(_req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
+function apiDecisions(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '50', 10));
+
+  try {
+    const decisions = getRecentDecisions(limit);
+    json(res, decisions);
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: decisions fetch failed');
+    json(res, [], 500);
+  }
+}
+
+function apiProposals(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '50', 10));
+
+  try {
+    const proposals = getRecentTradeProposals(limit);
+    json(res, proposals);
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: proposals fetch failed');
+    json(res, [], 500);
+  }
+}
+
 // === Router ===
 
 const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void> = {
@@ -207,6 +233,8 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/positions': apiPositions,
   '/api/scores': apiScores,
   '/api/stats': apiTradeStats,
+  '/api/decisions': apiDecisions,
+  '/api/proposals': apiProposals,
 };
 
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {

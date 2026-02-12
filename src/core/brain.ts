@@ -4,6 +4,7 @@ import { MarketScorer } from '../strategies/discretionary/scorer.js';
 import { LLMAdvisor } from '../strategies/discretionary/llm-advisor.js';
 import { InfoSourceAggregator } from '../data/sources/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
+import { logBrainDecision, updateBrainDecisionTrade, logTradeProposal } from '../data/storage.js';
 import type {
   MarketState,
   BrainConfig,
@@ -67,6 +68,7 @@ export class Brain extends EventEmitter {
 
   // Injected references for position context
   private getPositions: () => ActiveDiscretionaryPosition[] = () => [];
+  private getBalance: () => Promise<number> = async () => 0;
 
   constructor(cfg: BrainConfig) {
     super();
@@ -84,6 +86,11 @@ export class Brain extends EventEmitter {
     this.getPositions = fn;
   }
 
+  /** Wire up balance accessor for dynamic balance in LLM prompts */
+  setBalanceAccessor(fn: () => Promise<number>): void {
+    this.getBalance = fn;
+  }
+
   /** Start both loops */
   async start(): Promise<void> {
     log.info({
@@ -91,6 +98,9 @@ export class Brain extends EventEmitter {
       comprehensive: `${this.config.comprehensiveIntervalMs / 60_000}min`,
       urgent: `${this.config.urgentScanIntervalMs / 60_000}min`,
     }, 'Brain starting...');
+
+    // Initialize LLM advisor
+    await this.advisor.init();
 
     // 30-min comprehensive loop
     this.comprehensiveInterval = setInterval(() => {
@@ -192,8 +202,9 @@ export class Brain extends EventEmitter {
     }
 
     try {
+      const balance = await this.getBalance();
       const context = this.buildComprehensiveContext(snapshots, infoSignals);
-      const response = await this.advisor.comprehensiveAnalysis(context);
+      const response = await this.advisor.comprehensiveAnalysis(context, balance);
 
       if (response) {
         // Update market state from LLM response
@@ -215,6 +226,22 @@ export class Brain extends EventEmitter {
         this.state.updatedAt = now;
         this.state.lastComprehensiveAt = now;
         this.state.comprehensiveCount++;
+
+        // Log decision to database
+        try {
+          const decisionId = logBrainDecision(
+            'comprehensive',
+            response.regime ?? null,
+            response.direction ?? null,
+            response.riskLevel ?? null,
+            response.confidence ?? null,
+            response.reasoning ?? null,
+            response.directives ? JSON.stringify(response.directives) : null,
+          );
+          void decisionId; // stored in DB, no need to retain in memory
+        } catch (e) {
+          log.warn({ err: e }, 'Failed to log brain decision');
+        }
 
         log.info({
           regime: this.state.regime,
@@ -296,19 +323,71 @@ export class Brain extends EventEmitter {
         try {
           const positions = this.getPositions();
           const infoContext = this.infoSources.buildLLMContext();
+          const balance = await this.getBalance();
           const result = await this.advisor.analyzeMarketWithTrigger(
             snapshots,
             score,
             positions,
             infoContext !== 'No external data sources available.' ? infoContext : undefined,
+            balance,
           );
 
           if (result.action === 'propose_trade' && result.proposal) {
             const snapshot = snapshots.find(s => s.symbol === score.symbol);
             log.info({ proposal: result.proposal }, 'Urgent: trade proposal generated');
+
+            // Log to database
+            try {
+              const decisionId = logBrainDecision(
+                'urgent_trigger',
+                this.state.regime,
+                this.state.direction,
+                this.state.riskLevel,
+                this.state.confidence,
+                `Urgent trigger for ${score.symbol} (score: ${score.totalScore})`,
+                null,
+                score.symbol,
+                score.totalScore,
+              );
+              const proposalDbId = logTradeProposal(
+                result.proposal.id,
+                result.proposal.symbol,
+                result.proposal.side,
+                result.proposal.entryPrice,
+                result.proposal.stopLoss ?? 0,
+                result.proposal.takeProfit ?? 0,
+                result.proposal.leverage ?? 3,
+                result.proposal.confidence ?? 'medium',
+                result.proposal.rationale ?? '',
+                'pending',
+                decisionId,
+              );
+              updateBrainDecisionTrade(decisionId, proposalDbId);
+            } catch (e) {
+              log.warn({ err: e }, 'Failed to log trade proposal');
+            }
+
             this.emit('tradeProposal', result.proposal, snapshot);
           } else if (result.action === 'no_trade') {
             log.debug({ reason: result.content }, 'Urgent: LLM says no trade');
+
+            // Log no_trade decision
+            try {
+              logBrainDecision(
+                'urgent_trigger',
+                this.state.regime,
+                this.state.direction,
+                this.state.riskLevel,
+                this.state.confidence,
+                result.content ?? 'No opportunity',
+                null,
+                score.symbol,
+                score.totalScore,
+              );
+            } catch (e) {
+              log.warn({ err: e }, 'Failed to log no_trade decision');
+            }
+
             this.emit('alert', `${this.scorer.formatScore(score)}\nLLM: ${result.content ?? 'No opportunity'}`);
           }
         } catch (err) {
