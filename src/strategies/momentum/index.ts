@@ -224,11 +224,19 @@ export class MomentumStrategy extends Strategy {
       ? currentPrice + 3 * atr
       : currentPrice - 3 * atr;
 
-    // Position sizing: equal allocation per symbol, Brain-adjusted leverage
-    const capitalPerSymbol = this.allocatedCapital.div(this.config.symbols.length);
+    // Skip if auto-stopped due to consecutive losses
+    if (this.isAutoStopped) {
+      this.log.warn({ symbol }, 'Momentum entry skipped: auto-stopped (3 consecutive losses)');
+      return;
+    }
+
+    // Position sizing: Kelly Criterion + Brain-adjusted leverage + loss multiplier
+    const kellyFrac = this.kellyFraction(); // half-Kelly from trade history
+    const sizeFraction = Math.max(kellyFrac, 1 / this.config.symbols.length); // floor at equal allocation
+    const capitalForTrade = this.allocatedCapital.mul(sizeFraction);
     const leverageMultiplier = this.marketState?.directives.momentum.leverageMultiplier ?? 1.0;
     const effectiveLeverage = Math.max(1, Math.round(this.config.leverage * leverageMultiplier));
-    const notional = capitalPerSymbol.mul(effectiveLeverage);
+    const notional = capitalForTrade.mul(effectiveLeverage).mul(this.lossSizeMultiplier);
     const size = notional.div(currentPrice);
     const sz = parseFloat(size.toFixed(4));
 

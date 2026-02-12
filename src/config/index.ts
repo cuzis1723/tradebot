@@ -16,12 +16,12 @@ const configSchema = z.object({
   tgBotToken: z.string().optional(),
   tgChatId: z.string().optional(),
 
-  // Capital allocation
+  // Capital allocation (v3: Disc 55%, Mom 25%, EquityCross 10%, Cash 10%)
   initialCapitalUsd: z.coerce.number().positive().default(1000),
-  gridCapitalPct: z.coerce.number().min(0).max(100).default(20),
-  fundingArbCapitalPct: z.coerce.number().min(0).max(100).default(40),
-  momentumCapitalPct: z.coerce.number().min(0).max(100).default(30),
-  sniperCapitalPct: z.coerce.number().min(0).max(100).default(10),
+  discretionaryCapitalPct: z.coerce.number().min(0).max(100).default(55),
+  momentumCapitalPct: z.coerce.number().min(0).max(100).default(25),
+  equityCrossCapitalPct: z.coerce.number().min(0).max(100).default(10),
+  cashBufferPct: z.coerce.number().min(0).max(100).default(10),
 
   // Anthropic API
   anthropicApiKey: z.string().optional(),
@@ -45,10 +45,10 @@ function loadConfig(): Config {
     tgBotToken: process.env.TG_BOT_TOKEN,
     tgChatId: process.env.TG_CHAT_ID,
     initialCapitalUsd: process.env.INITIAL_CAPITAL_USD,
-    gridCapitalPct: process.env.GRID_CAPITAL_PCT,
-    fundingArbCapitalPct: process.env.FUNDING_ARB_CAPITAL_PCT,
+    discretionaryCapitalPct: process.env.DISCRETIONARY_CAPITAL_PCT,
     momentumCapitalPct: process.env.MOMENTUM_CAPITAL_PCT,
-    sniperCapitalPct: process.env.SNIPER_CAPITAL_PCT,
+    equityCrossCapitalPct: process.env.EQUITY_CROSS_CAPITAL_PCT,
+    cashBufferPct: process.env.CASH_BUFFER_PCT,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     anthropicModel: process.env.ANTHROPIC_MODEL,
     maxGlobalDrawdownPct: process.env.MAX_GLOBAL_DRAWDOWN_PCT,

@@ -119,23 +119,20 @@ export class CoinGeckoSource {
   generateTriggerFlags(trending: TrendingCoin[]): InfoTriggerFlag[] {
     const flags: InfoTriggerFlag[] = [];
 
-    // Check if our tracked symbols appeared in trending
+    // Check if our tracked symbols appeared in trending with strong price move
+    // CLAUDE.md: "트렌딩 + 24h >20% 상승" → +2
     for (const coin of trending) {
       if (!coin.relevantSymbol) continue;
 
-      // Our tracked coin is trending → retail attention signal
-      const prevRank = this.previousTrendingRanks.get(coin.id);
-      const isNewlyTrending = prevRank === undefined;
-
-      if (isNewlyTrending || coin.score <= 2) {
-        // Newly appeared or top-ranked in trending
+      // Only trigger if coin is trending AND has >20% price surge in 24h
+      if (coin.priceChange24h > 20) {
         flags.push({
           source: 'coingecko',
-          name: 'trending_coin',
+          name: 'trending_surge',
           score: 2,
-          direction: coin.priceChange24h > 0 ? 'long' : coin.priceChange24h < -3 ? 'short' : 'neutral',
+          direction: 'long',
           relevantSymbol: coin.relevantSymbol,
-          detail: `${coin.name} trending #${coin.score + 1} on CoinGecko (24h: ${coin.priceChange24h > 0 ? '+' : ''}${coin.priceChange24h.toFixed(1)}%)`,
+          detail: `${coin.name} trending #${coin.score + 1} + surging +${coin.priceChange24h.toFixed(1)}% 24h`,
         });
       }
     }

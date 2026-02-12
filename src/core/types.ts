@@ -152,6 +152,25 @@ export interface MomentumConfig {
   leverage: number;
 }
 
+// === Equity Cross Strategy Types ===
+
+export interface EquityCrossConfig {
+  /** Equity perp symbols on Hyperliquid (e.g., NVDA, TSLA, AAPL) */
+  equitySymbols: string[];
+  /** Crypto perp symbols to correlate against */
+  cryptoSymbols: string[];
+  /** Correlation mappings: equity → related crypto perps */
+  correlationMap: Record<string, string[]>;
+  capitalUsd: number;
+  leverage: number;
+  /** Minimum equity move (%) to consider a signal */
+  minEquityMovePct: number;
+  /** Scan interval in ms */
+  scanIntervalMs: number;
+  /** Correlation window (number of 1h candles for rolling correlation) */
+  correlationWindow: number;
+}
+
 // === Discretionary Trading Types ===
 
 export interface DiscretionaryConfig {
@@ -185,6 +204,8 @@ export interface MarketSnapshot {
   volumeRatio?: number;      // last 1h volume / 24h avg hourly volume
   oiChange1h?: number;       // OI % change since last analysis
   atrAvg20?: number;         // 20-period average ATR for volatility comparison
+  // 15m candle data (v3)
+  candle15m?: { size: number; atr14: number; isLarge: boolean; direction: 'long' | 'short' };
 }
 
 export interface TradeProposal {
@@ -219,7 +240,7 @@ export interface ActiveDiscretionaryPosition {
 
 export interface TriggerFlag {
   name: string;
-  category: 'price' | 'momentum' | 'volatility' | 'volume' | 'structure' | 'cross';
+  category: 'price' | 'price_15m' | 'momentum' | 'volatility' | 'volume' | 'structure' | 'cross' | 'external';
   score: number;
   direction: 'long' | 'short' | 'neutral';
   detail: string;

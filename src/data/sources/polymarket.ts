@@ -53,11 +53,18 @@ interface GammaMarket {
   closed: boolean;
 }
 
+interface ProbabilityHistoryEntry {
+  timestamp: number;
+  probability: number;
+}
+
 export class PolymarketSource {
   private cache: PredictionMarket[] = [];
   private lastFetch = 0;
   private readonly FETCH_INTERVAL_MS = 10 * 60 * 1000; // 10 min cache
   private previousProbabilities: Map<string, number> = new Map();
+  // 30-minute probability history for rapid_shift detection (v3)
+  private probabilityHistory: Map<string, ProbabilityHistoryEntry[]> = new Map();
 
   async fetchMarkets(): Promise<PredictionMarket[]> {
     const now = Date.now();
@@ -86,9 +93,12 @@ export class PolymarketSource {
         for (const market of event.markets) {
           if (!market.active || market.closed) continue;
 
-          // Filter for crypto/macro relevant markets
+          // Filter for crypto/macro relevant markets (word-boundary match to avoid "SOLV"→"sol" etc.)
           const titleLower = (event.title + ' ' + market.question).toLowerCase();
-          const matchedKeyword = CRYPTO_KEYWORDS.find(kw => titleLower.includes(kw));
+          const matchedKeyword = CRYPTO_KEYWORDS.find(kw => {
+            const regex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+            return regex.test(titleLower);
+          });
           if (!matchedKeyword) continue;
 
           // Parse outcome prices
@@ -122,6 +132,14 @@ export class PolymarketSource {
 
           // Store current probability for next delta calculation
           this.previousProbabilities.set(market.id, probability);
+
+          // Track 30min probability history (v3: rapid_shift detection)
+          const history = this.probabilityHistory.get(market.id) ?? [];
+          history.push({ timestamp: now, probability });
+          // Prune entries older than 35 min
+          const cutoff = now - 35 * 60 * 1000;
+          const pruned = history.filter(h => h.timestamp > cutoff);
+          this.probabilityHistory.set(market.id, pruned);
         }
       }
 
@@ -159,17 +177,46 @@ export class PolymarketSource {
         }
       }
 
+      // Rapid shift: >15%p change within 30 minutes (v3 — scorer +4)
+      const history = this.probabilityHistory.get(market.id);
+      if (history && history.length >= 2) {
+        const oldest = history[0];
+        const timeDiffMs = Date.now() - oldest.timestamp;
+        if (timeDiffMs >= 5 * 60 * 1000) { // need at least 5min of data
+          const rapidDelta = market.probability - oldest.probability;
+          const absRapidDelta = Math.abs(rapidDelta);
+          if (absRapidDelta >= 0.15) { // 15%p shift within 30min window
+            for (const symbol of market.relevantSymbols) {
+              flags.push({
+                source: 'polymarket',
+                name: 'rapid_shift',
+                score: 4,
+                direction: this.inferDirection(market, rapidDelta),
+                relevantSymbol: symbol,
+                detail: `Polymarket RAPID "${market.question.slice(0, 50)}": ${(oldest.probability * 100).toFixed(0)}% → ${(market.probability * 100).toFixed(0)}% in ${Math.round(timeDiffMs / 60_000)}min (${rapidDelta > 0 ? '+' : ''}${(rapidDelta * 100).toFixed(1)}%p)`,
+              });
+            }
+          }
+        }
+      }
+
       // High-volume market with extreme probability (>90% or <10%)
+      // Only flag when probability actually moved (>= 2% delta) — skip static extremes
       if (market.volume24h > 50_000 && (market.probability > 0.90 || market.probability < 0.10)) {
-        for (const symbol of market.relevantSymbols) {
-          flags.push({
-            source: 'polymarket',
-            name: 'prediction_extreme',
-            score: 2,
-            direction: this.inferDirection(market, market.probability > 0.5 ? 1 : -1),
-            relevantSymbol: symbol,
-            detail: `Polymarket high-conviction "${market.question.slice(0, 50)}": ${(market.probability * 100).toFixed(0)}% (vol: $${(market.volume24h / 1000).toFixed(0)}k)`,
-          });
+        const extremeDelta = market.prevProbability !== undefined
+          ? Math.abs(market.probability - market.prevProbability)
+          : 1; // First reading always flags
+        if (extremeDelta >= 0.02) {
+          for (const symbol of market.relevantSymbols) {
+            flags.push({
+              source: 'polymarket',
+              name: 'prediction_extreme',
+              score: 2,
+              direction: this.inferDirection(market, market.probability > 0.5 ? 1 : -1),
+              relevantSymbol: symbol,
+              detail: `Polymarket extreme "${market.question.slice(0, 50)}": ${(market.probability * 100).toFixed(0)}% (${market.prevProbability !== undefined ? `${((market.probability - market.prevProbability) * 100).toFixed(1)}%p shift` : 'new'}, vol: $${(market.volume24h / 1000).toFixed(0)}k)`,
+            });
+          }
         }
       }
     }

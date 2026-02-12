@@ -21,6 +21,11 @@ export abstract class Strategy extends EventEmitter {
   protected dailyPnlResetDate = '';
   protected log;
 
+  // Consecutive loss tracking (v3: auto position reduction)
+  protected consecutiveLosses = 0;
+  protected lossSizeMultiplier = 1.0;
+  protected isAutoStopped = false;
+
   /** Shared market state from Brain (updated every 30min comprehensive + 5min urgent) */
   private _marketState: Readonly<MarketState> | null = null;
 
@@ -68,6 +73,24 @@ export abstract class Strategy extends EventEmitter {
       this.winningTrades++;
     } else if (pnl.lessThan(0)) {
       this.losingTrades++;
+    }
+
+    // Consecutive loss tracking (v3)
+    if (pnl.lessThan(0)) {
+      this.consecutiveLosses++;
+      if (this.consecutiveLosses >= 3) {
+        this.lossSizeMultiplier = 0;
+        this.isAutoStopped = true;
+        this.pause();
+        this.log.error({ consecutiveLosses: this.consecutiveLosses }, 'Auto-stopped: 3 consecutive losses');
+      } else if (this.consecutiveLosses >= 2) {
+        this.lossSizeMultiplier = 0.5;
+        this.log.warn({ consecutiveLosses: this.consecutiveLosses, multiplier: 0.5 }, 'Position size reduced: 2 consecutive losses');
+      }
+    } else {
+      this.consecutiveLosses = 0;
+      this.lossSizeMultiplier = 1.0;
+      this.isAutoStopped = false;
     }
 
     // Track daily PnL
@@ -120,6 +143,25 @@ export abstract class Strategy extends EventEmitter {
     return this.status === 'running';
   }
 
+  getConsecutiveLosses(): number {
+    return this.consecutiveLosses;
+  }
+
+  getLossSizeMultiplier(): number {
+    return this.lossSizeMultiplier;
+  }
+
+  getIsAutoStopped(): boolean {
+    return this.isAutoStopped;
+  }
+
+  resetConsecutiveLosses(): void {
+    this.consecutiveLosses = 0;
+    this.lossSizeMultiplier = 1.0;
+    this.isAutoStopped = false;
+    this.log.info('Consecutive losses reset manually');
+  }
+
   /** Called by Engine when Brain updates the market state */
   setMarketState(state: Readonly<MarketState>): void {
     this._marketState = state;
@@ -128,5 +170,34 @@ export abstract class Strategy extends EventEmitter {
   /** Access current market state from Brain */
   protected get marketState(): Readonly<MarketState> | null {
     return this._marketState;
+  }
+
+  /**
+   * Kelly Criterion position sizing.
+   * Returns the optimal fraction of capital to risk (0-1).
+   * Uses half-Kelly for safety (Kelly is aggressive in practice).
+   *
+   * @param winRate - historical win rate (0-1)
+   * @param avgWinLossRatio - average win / average loss (reward/risk)
+   * @param fractionalKelly - fraction of full Kelly to use (default 0.5 = half-Kelly)
+   * @returns fraction of capital to allocate (0 to maxFraction)
+   */
+  protected kellyFraction(
+    winRate?: number,
+    avgWinLossRatio?: number,
+    fractionalKelly = 0.5,
+  ): number {
+    // Use strategy's own stats if not provided
+    const p = winRate ?? (this.totalTrades >= 5 ? this.winningTrades / this.totalTrades : 0.5);
+    const b = avgWinLossRatio ?? 1.5; // default R:R assumption
+
+    // Kelly formula: f* = (p * b - q) / b  where q = 1 - p
+    const q = 1 - p;
+    const kelly = (p * b - q) / b;
+
+    // Apply fractional Kelly and clamp to [0, 0.25]
+    const fraction = Math.max(0, Math.min(0.25, kelly * fractionalKelly));
+
+    return fraction;
   }
 }
