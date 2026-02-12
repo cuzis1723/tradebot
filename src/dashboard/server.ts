@@ -45,19 +45,25 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
 
 function apiBalance(_req: IncomingMessage, res: ServerResponse): void {
   const hl = getHyperliquidClient();
-  hl.getAccountState().then(state => {
-    const accountValue = parseFloat(state.marginSummary.accountValue);
+  Promise.all([hl.getAccountState(), hl.getSpotBalances()]).then(([state, spotState]) => {
+    const perpValue = parseFloat(state.marginSummary.accountValue);
+    const spotUsdc = spotState.balances
+      .filter(b => b.coin === 'USDC')
+      .reduce((sum: number, b) => sum + parseFloat(b.total), 0);
+    const totalBalance = perpValue + spotUsdc;
     const marginUsed = parseFloat(state.marginSummary.totalMarginUsed);
     json(res, {
-      balance: accountValue,
+      balance: totalBalance,
+      perpValue,
+      spotUsdc,
       marginUsed,
-      freeMargin: accountValue - marginUsed,
+      freeMargin: totalBalance - marginUsed,
       notionalPosition: parseFloat(state.marginSummary.totalNtlPos),
       positionCount: state.assetPositions.filter(ap => parseFloat(ap.position.szi) !== 0).length,
     });
   }).catch(err => {
     log.warn({ err }, 'Dashboard: balance fetch failed');
-    json(res, { balance: 0, marginUsed: 0, freeMargin: 0, notionalPosition: 0, positionCount: 0, error: 'Failed to fetch balance' }, 500);
+    json(res, { balance: 0, perpValue: 0, spotUsdc: 0, marginUsed: 0, freeMargin: 0, notionalPosition: 0, positionCount: 0, error: 'Failed to fetch balance' }, 500);
   });
 }
 

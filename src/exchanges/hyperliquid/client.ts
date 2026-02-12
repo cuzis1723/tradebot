@@ -87,8 +87,15 @@ export class HyperliquidClient {
   }
 
   async getBalance(): Promise<Decimal> {
-    const state = await this.getAccountState();
-    return new Decimal(state.marginSummary.accountValue);
+    const [state, spotState] = await Promise.all([
+      this.getAccountState(),
+      this.getSpotBalances(),
+    ]);
+    const perpValue = new Decimal(state.marginSummary.accountValue);
+    const spotUsdc = spotState.balances
+      .filter(b => b.coin === 'USDC')
+      .reduce((sum, b) => sum.plus(new Decimal(b.total)), new Decimal(0));
+    return perpValue.plus(spotUsdc);
   }
 
   async getPositions(): Promise<HLClearinghouseState['assetPositions']> {
