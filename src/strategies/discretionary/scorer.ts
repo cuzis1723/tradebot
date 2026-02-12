@@ -379,8 +379,30 @@ export class MarketScorer {
       `${icon} <b>${score.symbol}</b> | Score: ${score.totalScore}${score.bonusScore > 0 ? ` (+${score.bonusScore} bonus)` : ''} | ${dirIcon} ${score.directionBias.toUpperCase()}`,
     ];
 
-    for (const flag of score.flags) {
-      lines.push(`  • ${flag.detail}`);
+    // Separate TA flags and external flags
+    const taFlags = score.flags.filter(f => f.category !== 'external');
+    const extFlags = score.flags.filter(f => f.category === 'external');
+
+    // TA signals (show all)
+    if (taFlags.length > 0) {
+      lines.push(`<b>TA</b>`);
+      for (const flag of taFlags) {
+        lines.push(`  • ${flag.detail}`);
+      }
+    }
+
+    // External signals (limit to top 3 by score, hide the rest)
+    if (extFlags.length > 0) {
+      const sorted = [...extFlags].sort((a, b) => b.score - a.score);
+      const shown = sorted.slice(0, 3);
+      const hidden = sorted.length - shown.length;
+      lines.push(`<b>External</b>`);
+      for (const flag of shown) {
+        lines.push(`  • ${flag.detail}`);
+      }
+      if (hidden > 0) {
+        lines.push(`  <i>...+${hidden} more</i>`);
+      }
     }
 
     return lines.join('\n');

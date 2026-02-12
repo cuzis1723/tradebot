@@ -93,9 +93,12 @@ export class PolymarketSource {
         for (const market of event.markets) {
           if (!market.active || market.closed) continue;
 
-          // Filter for crypto/macro relevant markets
+          // Filter for crypto/macro relevant markets (word-boundary match to avoid "SOLV"→"sol" etc.)
           const titleLower = (event.title + ' ' + market.question).toLowerCase();
-          const matchedKeyword = CRYPTO_KEYWORDS.find(kw => titleLower.includes(kw));
+          const matchedKeyword = CRYPTO_KEYWORDS.find(kw => {
+            const regex = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+            return regex.test(titleLower);
+          });
           if (!matchedKeyword) continue;
 
           // Parse outcome prices
@@ -198,16 +201,22 @@ export class PolymarketSource {
       }
 
       // High-volume market with extreme probability (>90% or <10%)
+      // Only flag when probability actually moved (>= 2% delta) — skip static extremes
       if (market.volume24h > 50_000 && (market.probability > 0.90 || market.probability < 0.10)) {
-        for (const symbol of market.relevantSymbols) {
-          flags.push({
-            source: 'polymarket',
-            name: 'prediction_extreme',
-            score: 2,
-            direction: this.inferDirection(market, market.probability > 0.5 ? 1 : -1),
-            relevantSymbol: symbol,
-            detail: `Polymarket high-conviction "${market.question.slice(0, 50)}": ${(market.probability * 100).toFixed(0)}% (vol: $${(market.volume24h / 1000).toFixed(0)}k)`,
-          });
+        const extremeDelta = market.prevProbability !== undefined
+          ? Math.abs(market.probability - market.prevProbability)
+          : 1; // First reading always flags
+        if (extremeDelta >= 0.02) {
+          for (const symbol of market.relevantSymbols) {
+            flags.push({
+              source: 'polymarket',
+              name: 'prediction_extreme',
+              score: 2,
+              direction: this.inferDirection(market, market.probability > 0.5 ? 1 : -1),
+              relevantSymbol: symbol,
+              detail: `Polymarket extreme "${market.question.slice(0, 50)}": ${(market.probability * 100).toFixed(0)}% (${market.prevProbability !== undefined ? `${((market.probability - market.prevProbability) * 100).toFixed(1)}%p shift` : 'new'}, vol: $${(market.volume24h / 1000).toFixed(0)}k)`,
+            });
+          }
         }
       }
     }
