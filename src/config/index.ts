@@ -10,14 +10,14 @@ const configSchema = z.object({
   // Hyperliquid
   hlPrivateKey: z.string().min(1, 'HL_PRIVATE_KEY is required'),
   hlWalletAddress: z.string().optional(),
-  hlUseTestnet: z.coerce.boolean().default(true),
+  hlUseTestnet: z.coerce.boolean().default(false),
 
   // Telegram
   tgBotToken: z.string().optional(),
   tgChatId: z.string().optional(),
 
   // Capital allocation (v3: Disc 55%, Mom 25%, EquityCross 10%, Cash 10%)
-  initialCapitalUsd: z.coerce.number().positive().default(1000),
+  initialCapitalUsd: z.coerce.number().positive().default(500),
   discretionaryCapitalPct: z.coerce.number().min(0).max(100).default(55),
   momentumCapitalPct: z.coerce.number().min(0).max(100).default(25),
   equityCrossCapitalPct: z.coerce.number().min(0).max(100).default(10),
