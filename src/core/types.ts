@@ -152,6 +152,25 @@ export interface MomentumConfig {
   leverage: number;
 }
 
+// === Equity Cross Strategy Types ===
+
+export interface EquityCrossConfig {
+  /** Equity perp symbols on Hyperliquid (e.g., NVDA, TSLA, AAPL) */
+  equitySymbols: string[];
+  /** Crypto perp symbols to correlate against */
+  cryptoSymbols: string[];
+  /** Correlation mappings: equity → related crypto perps */
+  correlationMap: Record<string, string[]>;
+  capitalUsd: number;
+  leverage: number;
+  /** Minimum equity move (%) to consider a signal */
+  minEquityMovePct: number;
+  /** Scan interval in ms */
+  scanIntervalMs: number;
+  /** Correlation window (number of 1h candles for rolling correlation) */
+  correlationWindow: number;
+}
+
 // === Discretionary Trading Types ===
 
 export interface DiscretionaryConfig {

@@ -19,53 +19,64 @@ export interface ComprehensiveResponse {
 const SYSTEM_PROMPT = `You are the core decision engine of an automated crypto perpetual futures trading bot on Hyperliquid.
 
 ## Context
-- Capital: ~$600 allocated to this strategy (60% of $1,000 total portfolio)
+- Capital: ~$550 allocated to this strategy (55% of $1,000 total portfolio)
 - Target: 15-30% monthly return, max 20% drawdown
 - Style: Aggressive on high-probability setups, patient otherwise
 - Frequency: 10-20 trades/month (quality over quantity)
 - You are called ONLY when a code-based scoring system detects unusual market activity
-  (score >= 8/33 from 13 technical indicators). Your job is to validate whether the
+  (score >= 8/33 from 13+ technical indicators). Your job is to validate whether the
   detected signal is a real opportunity or noise.
 
 ## Your Role
 1. Evaluate the trigger signals provided — are they converging into a real setup?
 2. Consider market structure: trend, S/R levels, volume confirmation, funding bias
-3. If a genuine opportunity exists, propose a specific trade with exact levels
-4. If the signal is noise or timing is wrong, clearly say "no_trade" with reasoning
-5. Be decisive. Vague "maybe" answers waste API calls. Either propose or reject.
+3. Factor in EXTERNAL INTELLIGENCE (Polymarket, DefiLlama, CoinGecko) when available
+4. If a genuine opportunity exists, propose a specific trade with exact levels
+5. If the signal is noise or timing is wrong, clearly say "no_trade" with reasoning
+6. Be decisive. Vague "maybe" answers waste API calls. Either propose or reject.
 
 ## Scoring System (for reference)
 You are called when the bot's code-based scorer detects anomalies:
-- Price: 1h move >2.5%, 4h move >5%
+- Price: 1h move >2.5%, 4h move >5%, 15m candle >2x ATR
 - Momentum: RSI <25 or >75, EMA(9/21) crossover
 - Volatility: ATR spike >1.5x avg, Bollinger Band breakout
 - Volume: 1h volume >3x 24h average
 - Structure: Near S/R levels, OI rapid change >5%, extreme funding
 - Cross: BTC 3%+ move with alt lagging
-- Info: Polymarket probability shifts >10%, DeFi TVL drops/surges >5%, trending coins
-The trigger score and individual flags are included in the prompt.
-Flags prefixed with "info_" come from external intelligence sources (Polymarket, DefiLlama, CoinGecko).
+- External: Polymarket probability shift >15%p/30min, DeFi TVL change >10%/24h, CoinGecko trending +20%
+Flags prefixed with "info_" come from external intelligence sources.
 
 ## Decision Framework
 - Score 8-10: Standard analysis. Propose only if setup is clean.
 - Score 11+: Urgent — indicators strongly aligned. Be more aggressive with sizing.
 - Multi-signal alignment (same direction): Higher confidence warranted.
 - Conflicting signals (mixed direction): Usually means no clear trade.
+- External intelligence confirms TA: Significantly raises conviction.
 
-## Confidence Levels
-- "high": 3+ same-direction signals, clear trend, volume confirms, R:R >= 2:1
-  → Size: 15-25% of capital, Leverage: 4-5x
-- "medium": 2 aligned signals, decent setup but some uncertainty
-  → Size: 10-15% of capital, Leverage: 3x
-- "low": Signal detected but setup is marginal, counter-trend, or unclear
-  → Size: 5-10% of capital, Leverage: 2-3x
+## Confidence & Leverage Policy (STRICT)
+Leverage MUST match conviction level. Higher leverage ONLY with stronger evidence.
+
+- "highest": Info + TA perfectly aligned (e.g., Polymarket surge + TA confirmation)
+  → Leverage: 10-15x, Size: 20-25% of capital
+  → RARE: Only when external intelligence strongly confirms technical setup
+- "high": External source signal + scorer 8+ (info advantage + TA confirms)
+  → Leverage: 5-10x, Size: 15-20% of capital
+  → 3+ same-direction signals, clear trend, volume confirms
+- "medium": TA signals only, decent setup but no external confirmation
+  → Leverage: 3-5x, Size: 10-15% of capital
+  → 2 aligned signals, decent setup but some uncertainty
+- "low": Signal detected but setup is marginal
+  → Leverage: 3x, Size: 5-10% of capital
+  → Counter-trend or unclear setup
 
 ## Risk Rules (STRICT)
-- Max leverage: 5x
+- Max leverage: 15x (ONLY at "highest" confidence with info+TA alignment)
+- Default leverage: 3-5x for standard setups
 - Stop loss: REQUIRED on every trade
-  - High leverage (4-5x): SL within 2-3% of entry
-  - Medium leverage (3x): SL within 3-5% of entry
-  - Low leverage (2x): SL within 5-8% of entry
+  - Leverage 10-15x: SL within 1-2% of entry (TIGHT)
+  - Leverage 5-10x: SL within 2-3% of entry
+  - Leverage 3-5x: SL within 3-5% of entry
+  - Leverage 3x: SL within 5-8% of entry
 - Take profit: Minimum 1.5:1 R:R ratio, prefer 2:1+
 - size_pct: Percentage of allocated capital (max 25% per trade)
 - Never go all-in. Always preserve capital for the next opportunity.
@@ -84,9 +95,9 @@ For a trade proposal:
   "stop_loss": 2450.00,
   "take_profit": 2600.00,
   "size_pct": 15,
-  "leverage": 3,
+  "leverage": 5,
   "confidence": "high",
-  "rationale": "RSI oversold (22) with EMA golden cross + volume surge 3.5x. Strong bounce setup at support $2480. R:R 2:1."
+  "rationale": "RSI oversold (22) with EMA golden cross + volume surge 3.5x + Polymarket BTC ETF probability up 12%. Strong bounce setup at support $2480. R:R 2:1."
 }
 
 For no trade:
@@ -253,6 +264,7 @@ export class LLMAdvisor {
     snapshots: MarketSnapshot[],
     triggerScore: TriggerScore,
     openPositions?: ActiveDiscretionaryPosition[],
+    infoContext?: string,
   ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
     const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
     if (!targetSnapshot) {
@@ -319,7 +331,7 @@ export class LLMAdvisor {
 
     const urgencyLabel = triggerScore.totalScore >= 11 ? 'URGENT' : 'STANDARD';
 
-    const prompt = [
+    const promptParts = [
       `[TRIGGER ${urgencyLabel}] Score: ${triggerScore.totalScore}/33 | ${triggerScore.symbol} | Bias: ${triggerScore.directionBias.toUpperCase()}`,
       '',
       `=== TRIGGER SIGNALS ===`,
@@ -328,14 +340,25 @@ export class LLMAdvisor {
       `=== MARKET DATA (all tracked symbols) ===`,
       JSON.stringify(marketData, null, 2),
       '',
+    ];
+
+    // Include external intelligence if available
+    if (infoContext) {
+      promptParts.push(`=== EXTERNAL INTELLIGENCE ===`, infoContext, '');
+    }
+
+    promptParts.push(
       `=== OPEN POSITIONS ===`,
       positionContext,
       '',
       `=== TASK ===`,
       `The scoring system detected ${urgencyLabel.toLowerCase()} market activity for ${triggerScore.symbol}.`,
       `${triggerScore.flags.length} indicators fired with direction bias: ${triggerScore.directionBias.toUpperCase()}.`,
+      infoContext ? `Factor in EXTERNAL INTELLIGENCE when evaluating the opportunity.` : '',
       `Decide: Is this a genuine trading opportunity or noise? Respond with JSON only.`,
-    ].join('\n');
+    );
+
+    const prompt = promptParts.filter(Boolean).join('\n');
 
     const response = await this.chat(prompt);
     return this.parseResponse(response);
@@ -425,7 +448,7 @@ export class LLMAdvisor {
           size: data.size_pct / 100, // convert to decimal
           stopLoss: data.stop_loss,
           takeProfit: data.take_profit,
-          leverage: data.leverage ?? 3,
+          leverage: Math.min(15, data.leverage ?? 3),
           rationale: data.rationale,
           confidence: data.confidence ?? 'medium',
           riskRewardRatio: Math.abs(data.take_profit - data.entry_price) / Math.abs(data.entry_price - data.stop_loss),

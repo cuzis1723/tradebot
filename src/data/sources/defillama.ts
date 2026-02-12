@@ -122,13 +122,13 @@ export class DefiLlamaSource {
     const flags: InfoTriggerFlag[] = [];
 
     for (const data of tvlData) {
-      // Large TVL drop (>5% in 24h) → risk signal
-      if (data.tvlChange24h < -5) {
+      // Large TVL drop (>10% in 24h) → risk signal (CLAUDE.md: >10%/24h → +2)
+      if (data.tvlChange24h < -10) {
         for (const symbol of data.relevantSymbols) {
           flags.push({
             source: 'defillama',
             name: 'tvl_drop',
-            score: Math.abs(data.tvlChange24h) > 10 ? 3 : 2,
+            score: 2,
             direction: 'short',
             relevantSymbol: symbol,
             detail: `${data.chain} TVL drop: ${data.tvlChange24h.toFixed(1)}% 24h ($${(data.tvl / 1e9).toFixed(1)}B)`,
@@ -136,13 +136,13 @@ export class DefiLlamaSource {
         }
       }
 
-      // Large TVL surge (>5% in 24h) → bullish signal
-      if (data.tvlChange24h > 5) {
+      // Large TVL surge (>10% in 24h) → bullish signal (CLAUDE.md: >10%/24h → +2)
+      if (data.tvlChange24h > 10) {
         for (const symbol of data.relevantSymbols) {
           flags.push({
             source: 'defillama',
             name: 'tvl_surge',
-            score: data.tvlChange24h > 10 ? 3 : 2,
+            score: 2,
             direction: 'long',
             relevantSymbol: symbol,
             detail: `${data.chain} TVL surge: +${data.tvlChange24h.toFixed(1)}% 24h ($${(data.tvl / 1e9).toFixed(1)}B)`,

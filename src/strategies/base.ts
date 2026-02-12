@@ -171,4 +171,33 @@ export abstract class Strategy extends EventEmitter {
   protected get marketState(): Readonly<MarketState> | null {
     return this._marketState;
   }
+
+  /**
+   * Kelly Criterion position sizing.
+   * Returns the optimal fraction of capital to risk (0-1).
+   * Uses half-Kelly for safety (Kelly is aggressive in practice).
+   *
+   * @param winRate - historical win rate (0-1)
+   * @param avgWinLossRatio - average win / average loss (reward/risk)
+   * @param fractionalKelly - fraction of full Kelly to use (default 0.5 = half-Kelly)
+   * @returns fraction of capital to allocate (0 to maxFraction)
+   */
+  protected kellyFraction(
+    winRate?: number,
+    avgWinLossRatio?: number,
+    fractionalKelly = 0.5,
+  ): number {
+    // Use strategy's own stats if not provided
+    const p = winRate ?? (this.totalTrades >= 5 ? this.winningTrades / this.totalTrades : 0.5);
+    const b = avgWinLossRatio ?? 1.5; // default R:R assumption
+
+    // Kelly formula: f* = (p * b - q) / b  where q = 1 - p
+    const q = 1 - p;
+    const kelly = (p * b - q) / b;
+
+    // Apply fractional Kelly and clamp to [0, 0.25]
+    const fraction = Math.max(0, Math.min(0.25, kelly * fractionalKelly));
+
+    return fraction;
+  }
 }

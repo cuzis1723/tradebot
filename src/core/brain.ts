@@ -295,10 +295,12 @@ export class Brain extends EventEmitter {
 
         try {
           const positions = this.getPositions();
+          const infoContext = this.infoSources.buildLLMContext();
           const result = await this.advisor.analyzeMarketWithTrigger(
             snapshots,
             score,
             positions,
+            infoContext !== 'No external data sources available.' ? infoContext : undefined,
           );
 
           if (result.action === 'propose_trade' && result.proposal) {

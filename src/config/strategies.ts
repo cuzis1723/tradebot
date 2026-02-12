@@ -1,4 +1,4 @@
-import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig } from '../core/types.js';
+import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig, EquityCrossConfig } from '../core/types.js';
 
 export const defaultGridConfig: GridConfig = {
   symbol: 'ETH-PERP',
@@ -33,6 +33,23 @@ export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   leverage: 5,
   analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
+};
+
+export const defaultEquityCrossConfig: EquityCrossConfig = {
+  equitySymbols: ['NVDA', 'TSLA', 'AAPL'],
+  cryptoSymbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+  correlationMap: {
+    // AI/tech stocks → AI-adjacent crypto
+    NVDA: ['SOL-PERP', 'ETH-PERP'],
+    // Broad risk-on proxy
+    TSLA: ['BTC-PERP', 'ETH-PERP'],
+    AAPL: ['BTC-PERP'],
+  },
+  capitalUsd: 100,
+  leverage: 3,
+  minEquityMovePct: 3, // equity must move >3% to trigger
+  scanIntervalMs: 5 * 60 * 1000, // 5 min
+  correlationWindow: 24, // 24 x 1h candles for rolling correlation
 };
 
 export const defaultBrainConfig: BrainConfig = {

@@ -151,7 +151,10 @@ export class DiscretionaryStrategy extends Strategy {
 
     const hl = getHyperliquidClient();
 
-    const capitalForTrade = this.allocatedCapital.mul(proposal.size).mul(this.lossSizeMultiplier);
+    // Kelly-capped position sizing: LLM proposes size_pct, Kelly provides upper bound
+    const kellyMax = this.kellyFraction(undefined, proposal.riskRewardRatio);
+    const effectiveSize = Math.min(proposal.size, Math.max(kellyMax, 0.05)); // floor at 5%
+    const capitalForTrade = this.allocatedCapital.mul(effectiveSize).mul(this.lossSizeMultiplier);
     const sizeInUnits = capitalForTrade.mul(proposal.leverage).div(proposal.entryPrice);
     const sz = parseFloat(sizeInUnits.toFixed(4));
 

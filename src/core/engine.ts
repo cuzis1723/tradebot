@@ -84,6 +84,7 @@ export class TradingEngine {
     const capitalPctMap: Record<string, number> = {
       discretionary: config.discretionaryCapitalPct,
       momentum: config.momentumCapitalPct,
+      'equity-cross': config.equityCrossCapitalPct,
     };
     for (const [id, strategy] of this.strategies) {
       const capitalPct = capitalPctMap[id] ?? 10;

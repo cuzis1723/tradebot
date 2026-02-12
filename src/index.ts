@@ -1,9 +1,11 @@
 import { TradingEngine } from './core/engine.js';
 import { DiscretionaryStrategy } from './strategies/discretionary/index.js';
 import { MomentumStrategy } from './strategies/momentum/index.js';
+import { EquityCrossStrategy } from './strategies/equity-cross/index.js';
 import {
   defaultDiscretionaryConfig,
   defaultMomentumConfig,
+  defaultEquityCrossConfig,
   defaultBrainConfig,
 } from './config/strategies.js';
 import { setDiscretionaryStrategy, setBrain } from './monitoring/telegram.js';
@@ -17,12 +19,15 @@ async function main(): Promise<void> {
   // Engine now requires BrainConfig
   const engine = new TradingEngine(defaultBrainConfig);
 
-  // Register strategies (v3: Grid removed, only Discretionary + Momentum)
+  // Register strategies (v3: Discretionary + Momentum + EquityCross)
   const momentumStrategy = new MomentumStrategy(defaultMomentumConfig);
   engine.addStrategy(momentumStrategy);
 
   const discretionaryStrategy = new DiscretionaryStrategy(defaultDiscretionaryConfig);
   engine.addStrategy(discretionaryStrategy);
+
+  const equityCrossStrategy = new EquityCrossStrategy(defaultEquityCrossConfig);
+  engine.addStrategy(equityCrossStrategy);
 
   // Wire Brain → Discretionary: Brain proposals go to Discretionary for execution
   engine.setTradeProposalHandler(async (proposal, snapshot) => {
