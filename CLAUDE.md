@@ -13,20 +13,32 @@
 - 펀딩레이트 수익도 Liminal, Theo 등 기존 프로토콜이 더 잘함
 - **봇이 잘하는 것**: 시장 상황 판단, 타이밍, 레버리지 조절, 공격적 진입/퇴출
 - **핵심 가치**: LLM이 24/7 시장을 감시하고, 높은 확률의 기회에만 집중적으로 진입
+- **정보 우위 = 진짜 엣지**: TA만으로는 공개정보 역설 (승률 42-48% 한계), 외부 정보 소스와 결합해야 알파 생성
 
-### 전략 구성 (v2 - 재편)
+### 전략 구성 (v3 - Agent 토론 합의)
 
 | 전략 | 역할 | 자본 | 모드 |
 |------|------|------|------|
-| **Discretionary (Core)** | LLM 기반 공격적 트레이딩 | 60% ($600) | 반자동 → 조건부 자동 |
-| **Momentum (Support)** | 트렌드 확인 + 자동 진입 | 30% ($300) | Auto |
-| **Grid (Idle mode)** | 횡보장에서만 가동 | 10% ($100) | Auto (조건부) |
+| **Discretionary v3 (Core)** | 정보+TA 종합, 메인 수익원 | 55% ($550) | 반자동 → 조건부 자동 |
+| **Momentum (Support)** | 자동 트렌드 팔로잉 | 25% ($250) | Auto |
+| **Equity Cross** | 크립토-주식 상관관계 | 10% ($100) | Auto |
+| **현금 버퍼** | 급변 시 기동 자본 | 10% ($100) | - |
+| ~~Grid~~ | ~~제거 — $1,000에서 의미 없음~~ | - | - |
 | ~~Funding Arb~~ | ~~제거 — HLP/Theo가 더 잘함~~ | - | - |
 | ~~Token Sniping~~ | ~~보류 — MEV 경쟁 + 자본 부족~~ | - | - |
 
+### 레버리지 정책 (확정)
+
+| 확신도 | 레버리지 | 조건 | 빈도 |
+|--------|----------|------|------|
+| 최고 (정보+TA 완벽 일치) | 10-15x | Polymarket 급변 + TA 확인 | 연 5-10회 |
+| 높음 (정보 우위 + TA 확인) | 5-10x | 외부 소스 시그널 + scorer 8+ | 월 3-5회 |
+| 중간 (TA 시그널 위주) | 3-5x | 일반 트리거 | 일반 |
+| Momentum (자동) | 3x | 현재 5x에서 하향 | 자동 |
+
 ### 목표
-- 월 15-30% 수익률 (레버리지 활용, 고확률 트레이드 선별)
-- 최대 드로다운 20% 제한
+- 기대 수익: 연 35-60% (보수적), 월 2.5-4% 기본
+- 최대 드로다운 20% 하드 스톱 (생존 최우선)
 - 월 10~20회 트레이드 (질 > 양)
 
 ---
@@ -35,11 +47,14 @@
 
 | Strategy | Status | 비고 |
 |----------|--------|------|
-| Grid Trading | ✅ Implemented | v2에서 횡보장 전용으로 전환 예정 |
-| Funding Rate Arb | ✅ Implemented | v2에서 제거 예정 (프로토콜 대체) |
-| Momentum Trading | ✅ Implemented | 유지, 파라미터 최적화 예정 |
-| Discretionary Trading | ✅ Implemented | v2에서 Core로 대폭 고도화 예정 |
-| Token Sniping (Solana) | ❌ Not Started | 보류 (자본 $10k+ 시 재고) |
+| Discretionary v2 | ✅ Implemented | v3에서 정보 우위 + Equity Cross 추가 |
+| Brain (Dual-loop) | ✅ Implemented | 30분 종합 + 5분 긴급 아키텍처 |
+| Momentum Trading | ✅ Implemented | 레버리지 3x 하향 + 파라미터 최적화 필요 |
+| External Intelligence | ✅ Implemented | Polymarket + DefiLlama + CoinGecko |
+| Scorer (13 indicators) | ✅ Implemented | 15m 캔들 + Polymarket 급변 지표 추가 필요 |
+| Telegram (확장) | ✅ Implemented | /balance, /usage, /brain, /info 등 |
+| Grid Trading | ✅ Implemented | v3에서 제거 예정 |
+| Funding Rate Arb | ✅ Implemented (비활성) | 엔진에서 제거됨 |
 
 ---
 
@@ -50,30 +65,38 @@
 - 설정 가능한 그리드 레벨, 스프레드, 주문 크기
 - 자동 그리드 재배치 및 PnL 추적
 
-### Phase 2: Funding Rate Arb ✅
+### Phase 2: Funding Rate Arb ✅ (비활성)
 - 5분 주기 펀딩 레이트 스캔 (전 종목)
 - OI $500k+, Volume $100k+ 필터
-- 양(+) 펀딩 → 숏 / 음(-) 펀딩 → 롱 자동 진입
-- 펀딩 정상화/72h 만기/방향 전환 시 자동 청산
+- v2에서 엔진에서 제거 (프로토콜 대체)
 
-### Phase 2.5: Discretionary Trading ✅
-- 15분 주기 기술적 분석 (RSI, EMA, ATR, S/R, 트렌드)
-- Claude API (LLM) 기반 기회 탐지 및 제안 생성
-- Telegram으로 트레이드 제안 → 사용자 승인/수정/거절
-- 8개 대화형 명령어 지원
+### Phase 2.5: Discretionary v1 → v2 ✅
+- 15분 주기 → 스코어 트리거 기반 전환
+- 13개 지표 스코어링 엔진 (scorer.ts)
+- 볼린저 밴드, OI, 볼륨 지표 추가
+- 쿨다운 시스템 (심볼별 2h, 글로벌 30min, 일일 12회)
 
 ### Phase 3: Momentum Trading ✅
 - EMA(9/21) 크로스오버 시그널
 - RSI 필터 (과매수/과매도 회피)
 - ATR(14) 기반 SL (2x ATR) / TP (3x ATR)
 - 심볼별 4시간 시그널 쿨다운
+- Brain directive 연동 (allowLong/allowShort/leverageMultiplier)
+
+### Phase 4: Brain + External Intelligence ✅
+- Brain 듀얼 루프 (30분 종합 + 5분 긴급)
+- Polymarket Gamma API (예측시장 확률) — API 키 불필요
+- DefiLlama (DeFi TVL 변동) — API 키 불필요
+- CoinGecko (트렌딩 코인) — API 키 불필요
+- 전략별 Brain directive 수신 인터페이스
+- LLM 토큰 사용량 추적 + 비용 추정
 
 ### Infrastructure ✅
 - Hyperliquid 거래소 어댑터 (REST + WebSocket + 캔들 + 펀딩)
 - 트레이딩 엔진 + 전략 라이프사이클 관리 (start/stop/pause/resume)
 - 리스크 매니저 (드로다운 보호, 포지션 제한)
 - SQLite 트레이드 로깅 (WAL mode)
-- Telegram 봇 (13개 명령어)
+- Telegram 봇 (/balance, /usage, /brain, /info 등 20+ 명령어)
 - Zod v4 환경변수 검증
 
 ### DevOps ✅
@@ -84,73 +107,80 @@
 
 ---
 
-## 남은 작업 (Todo)
+## 남은 작업 (Todo) — v3 로드맵
 
-### v2 전략 재편
-- [x] Discretionary v2: 스코어링 엔진 + 스마트 LLM 트리거
-- [x] Funding Arb 전략 비활성화 (엔진에서 제거)
-- [x] 자본 배분 재조정 (Discretionary 60%, Momentum 30%, Grid 10%)
-- [x] Telegram /score, /cooldown 명령어 추가
-- [ ] Grid 전략을 횡보장 전용으로 전환 (시장 상태 판단 로직)
-- [ ] Momentum 파라미터 최적화
+### Phase 5: v3 전략 재편 (현재)
+
+#### Phase 5-1: 리스크 강화 + Grid 제거 + Momentum 최적화 (1주)
+- [ ] Grid 전략 완전 제거 (엔진에서 제거, 코드 유지)
+- [ ] 자본 배분 재조정 (Disc 55%, Mom 25%, Equity 10%, Cash 10%)
+- [ ] Momentum 레버리지 5x → 3x 하향
+- [ ] Momentum 파라미터 최적화 (EMA/RSI/ATR 조정)
+- [ ] 연속 손실 시 자동 포지션 축소 (2연패 → 사이즈 50%, 3연패 → 정지)
+- [ ] 드로다운 20% 하드 스톱 강화
+- [ ] 15m 캔들 기반 트리거 지표 추가 (현재 1h 캔들만)
+- [ ] Polymarket 급변 트리거 (>15%p/30min → scorer +4점)
 - [ ] 메인넷 전환
-- [ ] 15m 캔들 기반 트리거 지표 추가 (현재 1h 캔들만 사용)
 
-### 향후 개선
+#### Phase 5-2: 내러티브 탐지 + 정보 우위 강화 (1-2주)
+- [ ] DefiLlama TVL 급변 → scorer 트리거 연동
+- [ ] CoinGecko 트렌딩 급등 → scorer 트리거 연동
+- [ ] LLM 컨텍스트에 외부 소스 시그널 요약 자동 포함
+- [ ] 확신도 기반 레버리지 자동 조절 (LLM 응답 → 레버리지 매핑)
+
+#### Phase 5-3: Equity Perps Cross + Kelly Sizing (1주)
+- [ ] Equity Perps 크로스 전략 구현 (크립토-주식 상관관계)
+- [ ] Kelly Criterion 포지션 사이징
+- [ ] 전략 간 상관관계 모니터링
+
+#### Phase 5-4: 실전 최적화 (지속)
+- [ ] 30+ 트레이드 후 파라미터 최적화
 - [ ] 전략별 상세 백테스트
 - [ ] 모니터링 대시보드
-- [ ] 연속 손실 시 자동 포지션 축소
+
+**핵심 원칙: Phase 5-1만으로도 메인넷 가동 가능. Phase 5-2~3은 데이터를 수집하면서 점진적으로 추가.**
 
 ---
 
-## [설계] Discretionary v2: LLM 스마트 트리거 알고리즘
+## [설계] v3 아키텍처
 
-### 원칙
-- **코드가 감시, LLM이 판단** — 정량적 필터는 코드, 정성적 판단은 LLM
-- **노이즈 제거** — "평소와 다른" 움직임만 포착
-- **비용 제어** — 하루 최대 12회 LLM 호출 (월 ~$2-3 Haiku 기준)
-
-### 아키텍처
+### 듀얼 루프 아키텍처 (확정, 구현 완료)
 
 ```
-[5분 주기 데이터 수집] ← 코드, 비용 0
-        ↓
-[1차: 개별 지표 이상 감지] ← 코드, 비용 0
-        ↓
-[2차: 복합 스코어 계산] ← 코드, 비용 0
-        ↓
-  스코어 >= 임계값?
-    NO → 대기
-    YES ↓
-[3차: 쿨다운 체크]
-        ↓
-  쿨다운 통과?
-    NO → 대기
-    YES ↓
-[LLM 호출] → 트레이드 제안 or "기회 아님"
-        ↓
-[Telegram 알림 → 사용자 승인/자동 진입]
+[30분 종합 분석]                    [5분 긴급 트리거]
+  Polymarket 확률 변동               기존 scorer 13개 지표
+  DefiLlama TVL 변화                 가격 급변 (>2.5%/1h)
+  CoinGecko 트렌딩                   OI 급변 (>5%/1h)
+  Equity Perps 상관관계 (Phase 3)    Polymarket 급변 (>15%p/30m)
+  시장 레짐 판단                     거래량 스파이크 (5x+)
+       ↓                                  ↓
+  LLM 종합 판단                     스코어 8+ → 긴급 LLM 호출
+  → 포트폴리오 방향 설정             → 즉시 트레이드 제안
+  → 관심 종목/내러티브 업데이트       → Telegram 알림
 ```
 
-### 1차: 개별 지표 이상 감지 (5분 주기, 코드 기반)
+### Scorer 지표 (13개 구현 완료 + 추가 예정)
 
-| 카테고리 | 지표 | 트리거 조건 | 점수 |
-|----------|------|------------|------|
-| **가격 급변** | 1h 변동률 | \|변동\| > 2.5% | +3 |
-| | 4h 변동률 | \|변동\| > 5% | +3 |
-| | 15m 캔들 크기 | > 2x ATR(14) | +2 |
-| **모멘텀** | RSI(14) | < 25 또는 > 75 | +3 |
-| | RSI 다이버전스 | 가격 신고/저 vs RSI 역방향 | +4 |
-| | EMA(9/21) 크로스 | 1h 내 크로스오버 발생 | +3 |
-| **변동성** | ATR 급등 | 현재 ATR > 1.5x 20봉 평균 ATR | +2 |
-| | 볼린저 밴드 돌파 | 종가가 2σ 밖으로 돌파 | +2 |
-| **볼륨** | 거래량 급증 | 1h 거래량 > 3x 24h 평균 | +3 |
-| **시장 구조** | 지지/저항 도달 | 주요 S/R 레벨 ±0.5% 이내 | +2 |
-| | OI 급변 | 1h OI 변화 > 5% | +2 |
-| | 펀딩레이트 극단 | \|funding\| > 0.05%/h | +1 |
-| **크로스 심볼** | BTC 급변 시 알트 | BTC 3%+ 이동 + 알트 미반영 | +3 |
+| 카테고리 | 지표 | 트리거 조건 | 점수 | 상태 |
+|----------|------|------------|------|------|
+| **가격 급변** | 1h 변동률 | \|변동\| > 2.5% | +3 | ✅ |
+| | 4h 변동률 | \|변동\| > 5% | +3 | ✅ |
+| | 15m 캔들 크기 | > 2x ATR(14) | +2 | ❌ Phase 5-1 |
+| **모멘텀** | RSI(14) | < 25 또는 > 75 | +3 | ✅ |
+| | RSI 다이버전스 | 가격 신고/저 vs RSI 역방향 | +4 | ❌ Phase 5-2 |
+| | EMA(9/21) 크로스 | 1h 내 크로스오버 발생 | +3 | ✅ |
+| **변동성** | ATR 급등 | 현재 ATR > 1.5x 20봉 평균 ATR | +2 | ✅ |
+| | 볼린저 밴드 돌파 | 종가가 2σ 밖으로 돌파 | +2 | ✅ |
+| **볼륨** | 거래량 급증 | 1h 거래량 > 3x 24h 평균 | +3 | ✅ |
+| **시장 구조** | 지지/저항 도달 | 주요 S/R 레벨 ±0.5% 이내 | +2 | ✅ |
+| | OI 급변 | 1h OI 변화 > 5% | +2 | ✅ |
+| | 펀딩레이트 극단 | \|funding\| > 0.05%/h | +1 | ✅ |
+| **크로스 심볼** | BTC 급변 시 알트 | BTC 3%+ 이동 + 알트 미반영 | +3 | ✅ |
+| **외부 정보** | Polymarket 급변 | 확률 >15%p/30min 변동 | +4 | ❌ Phase 5-1 |
+| | DefiLlama TVL 급변 | 체인 TVL >10%/24h 변동 | +2 | ❌ Phase 5-2 |
+| | CoinGecko 급등 | 트렌딩 + 24h >20% 상승 | +2 | ❌ Phase 5-2 |
 
-### 2차: 복합 스코어 & 임계값
+### 복합 스코어 & 임계값
 
 ```
 총 점수 = Σ(트리거된 지표 점수)
@@ -167,7 +197,7 @@
 - 멀티 타임프레임 일치 (1h + 4h 같은 방향) → +2점
 - 2개+ 심볼에서 동시 시그널 → +1점
 
-### 3차: 쿨다운 규칙
+### 쿨다운 규칙
 
 | 규칙 | 값 | 이유 |
 |------|-----|------|
@@ -183,6 +213,7 @@
 [트리거 요약]
 - 트리거 점수: 9/15
 - 트리거된 지표: RSI(14)=22.3 (극저), EMA 크로스 (골든), 거래량 3.2x 급증
+- 외부 소스: Polymarket BTC ETF 승인 72% (+18%p/2h)
 - 심볼: ETH-PERP
 - 방향 편향: LONG (3/3 지표 일치)
 
@@ -191,12 +222,18 @@
 - 볼린저 밴드, 지지/저항선
 - OI, 펀딩레이트, 거래량 (vs 24h 평균)
 
+[외부 인텔리전스]
+- Polymarket: 주요 이벤트 확률 변동
+- DefiLlama: 체인별 TVL 흐름
+- CoinGecko: 트렌딩 코인/리테일 심리
+
 [포지션 상태]
 - 현재 오픈 포지션, 가용 자본
 - 오늘 PnL, 최근 5거래 승률
 
 [요청]
 진입 가치 판단 → 방향/레버리지/진입가/SL/TP를 JSON 제안
+레버리지는 확신도에 비례 (3x~15x)
 또는 "기회 아님" + 이유
 ```
 
@@ -208,22 +245,23 @@
 | 보통 | 5~8회 | ~$2 |
 | 급등/급락 | 8~12회 | ~$3 |
 
-### 구현 파일 매핑
+---
 
-| 파일 | 변경 내용 |
-|------|----------|
-| `src/strategies/discretionary/scorer.ts` | **신규** - 스코어링 엔진 |
-| `src/strategies/discretionary/analyzer.ts` | 확장 - 볼린저, OI, 볼륨 지표 추가 |
-| `src/strategies/discretionary/index.ts` | 리팩토링 - 15분 고정 → 스코어 트리거 |
-| `src/strategies/discretionary/llm-advisor.ts` | 유지 - 호출 빈도만 변경 |
-| `src/core/types.ts` | 타입 추가 - TriggerScore, CooldownState |
+## [설계] Equity Perps Cross 전략 (Phase 5-3)
 
-### 전략 제거/비활성화 시 변경 파일
+### 개요
+크립토-주식 상관관계를 활용한 크로스 마켓 전략. Hyperliquid의 Equity Perps (AAPL, TSLA, NVDA 등)와 크립토 Perps 간의 상관관계/디커플링을 탐지.
 
-| 파일 | 변경 내용 |
-|------|----------|
-| `src/index.ts` | Funding Arb 등록 제거 |
-| `src/config/strategies.ts` | 자본 배분 비율 변경 |
+### 핵심 아이디어
+- NVDA 급등 → AI 관련 크립토 (RENDER, FET 등) 후행 상승 포착
+- S&P500 급락 → 크립토 동반 하락 예측, 숏 또는 헷지
+- 크립토-주식 상관관계 이탈 시 수렴 트레이드
+
+### 구현 계획
+- 자본: 10% ($100)
+- Hyperliquid Equity Perps 가격 모니터링
+- 상관관계 테이블 유지 (rolling 30d correlation)
+- 디커플링 감지 시 LLM에 컨텍스트 전달
 
 ---
 
@@ -238,8 +276,9 @@
 | Logging | `pino` |
 | Config | `zod` v4 + `dotenv` |
 | Math | `decimal.js` |
-| LLM | `@anthropic-ai/sdk` (Discretionary 분석) |
-| TA | `technicalindicators` (RSI, EMA, ATR) |
+| LLM | `@anthropic-ai/sdk` (Discretionary 분석 + Brain 종합) |
+| TA | `technicalindicators` (RSI, EMA, ATR, BB) |
+| External Data | Polymarket Gamma API, DefiLlama API, CoinGecko API (모두 무료, 키 불필요) |
 | Deploy | Hetzner VPS + PM2 + GitHub Actions |
 
 ---
@@ -289,6 +328,7 @@ tradebot/
 │   │   ├── index.ts                  # Env config (zod validation)
 │   │   └── strategies.ts             # Strategy default configs
 │   ├── core/
+│   │   ├── brain.ts                  # Brain dual-loop (30min comprehensive + 5min urgent)
 │   │   ├── engine.ts                 # Main orchestrator
 │   │   ├── risk-manager.ts           # Drawdown/position limits
 │   │   └── types.ts                  # All shared types
@@ -297,20 +337,25 @@ tradebot/
 │   │       ├── client.ts             # HL REST + WS adapter (singleton)
 │   │       └── types.ts              # HL-specific types
 │   ├── strategies/
-│   │   ├── base.ts                   # Abstract Strategy class
+│   │   ├── base.ts                   # Abstract Strategy class (Brain directive 수신)
 │   │   ├── grid/
-│   │   │   └── index.ts              # Grid trading
+│   │   │   └── index.ts              # Grid trading (v3에서 제거 예정)
 │   │   ├── funding-arb/
-│   │   │   └── index.ts              # Funding rate arbitrage
+│   │   │   └── index.ts              # Funding rate arbitrage (비활성)
 │   │   ├── momentum/
 │   │   │   └── index.ts              # EMA crossover + RSI momentum
 │   │   └── discretionary/
 │   │       ├── index.ts              # Discretionary strategy (score-triggered v2)
 │   │       ├── analyzer.ts           # Market technical analysis (BB, OI, VolumeRatio)
 │   │       ├── scorer.ts             # Score-based trigger engine (13 indicators)
-│   │       └── llm-advisor.ts        # Anthropic API LLM advisor (trigger-aware)
+│   │       └── llm-advisor.ts        # Anthropic API LLM advisor (token tracking)
 │   ├── data/
-│   │   └── storage.ts                # SQLite persistence
+│   │   ├── storage.ts                # SQLite persistence
+│   │   └── sources/                  # External intelligence
+│   │       ├── index.ts              # InfoSources aggregator
+│   │       ├── polymarket.ts         # Polymarket Gamma API
+│   │       ├── defillama.ts          # DefiLlama API
+│   │       └── coingecko.ts          # CoinGecko API
 │   └── monitoring/
 │       ├── telegram.ts               # Telegram bot + all commands
 │       └── logger.ts                 # Pino logger
@@ -336,8 +381,15 @@ tradebot/
 ESM + TypeScript에서 반드시 `import { Decimal } from 'decimal.js'` 사용.
 `import Decimal from 'decimal.js'`는 namespace 타입 오류 발생.
 
+### External APIs (모두 무료, 키 불필요)
+- **Polymarket**: `https://gamma-api.polymarket.com/events` — 예측시장 이벤트/확률
+- **DefiLlama**: `https://api.llama.fi/v2/chains` — 체인별 TVL
+- **CoinGecko**: `https://api.coingecko.com/api/v3/search/trending` — 트렌딩 코인
+
 ### Telegram Commands
 - **General**: /status, /pnl, /pause, /resume, /stop, /help
+- **Account**: /balance, /usage
+- **Brain**: /brain, /info, /info refresh
 - **Discretionary**: /market, /score, /cooldown, /idea, /approve, /modify, /reject, /positions, /close, /ask
 
 ---
@@ -351,3 +403,24 @@ npm start          # node dist/index.js (프로덕션)
 npm test           # vitest
 npm run lint       # eslint
 ```
+
+---
+
+## Agent 토론 배경 (의사결정 기록)
+
+### 토론 요약 (Agent A: 실전 최적화론 vs Agent B: 알파 헌터)
+
+**Agent A** — "Build less, survive more, iterate with data"
+- 레버리지 2-5x 보수적, 연 35-60% 기대
+- 최소 구현으로 빠른 메인넷 가동, 데이터 수집 우선
+
+**Agent B** — "시장을 이기려면 시장보다 먼저 알아야 한다"
+- 레버리지 3-20x 확신도 비례, 연 150-280% 기대
+- 정보 우위가 유일한 엣지, 내러티브 시스템 핵심
+
+**합의 결론: Phase 기반 하이브리드**
+- Agent A의 "빠른 구현 → 데이터 수집" + Agent B의 "정보 우위 = 진짜 엣지"
+- Polymarket 반드시 추가 (양쪽 최고 ROI 합의)
+- Grid 축소/제거 ($1,000에서 의미 없음)
+- 드로다운 20% 하드 스톱 (생존 최우선)
+- Phase 5-1만으로 메인넷 가동 가능, 이후 점진적 확장
