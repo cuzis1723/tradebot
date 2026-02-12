@@ -23,13 +23,13 @@ export const defaultMomentumConfig: MomentumConfig = {
   rsiOverbought: 70,
   rsiOversold: 30,
   atrPeriod: 14,
-  capitalUsd: 300,
-  leverage: 5,
+  capitalUsd: 250,
+  leverage: 3,
 };
 
 export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  capitalUsd: 600,
+  capitalUsd: 550,
   leverage: 5,
   analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes

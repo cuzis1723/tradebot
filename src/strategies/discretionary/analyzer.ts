@@ -124,6 +124,31 @@ export class MarketAnalyzer {
     return { rsi14, ema9, ema21, atr14, support, resistance, bollingerUpper, bollingerLower, bollingerWidth, atrAvg20 };
   }
 
+  async analyze15mCandle(symbol: string): Promise<{ size: number; atr14: number; isLarge: boolean; direction: 'long' | 'short' } | null> {
+    try {
+      const candles15m = await this.fetchCandles(symbol, '15m' as '1h', 20);
+      if (candles15m.length < 15) return null;
+
+      const highs = candles15m.map(c => c.high);
+      const lows = candles15m.map(c => c.low);
+      const closes = candles15m.map(c => c.close);
+
+      const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+      const atr14 = atrValues.length > 0 ? atrValues[atrValues.length - 1] : 0;
+      if (atr14 === 0) return null;
+
+      const latest = candles15m[candles15m.length - 1];
+      const candleSize = latest.high - latest.low;
+      const isLarge = candleSize > 2 * atr14;
+      const direction: 'long' | 'short' = latest.close >= latest.open ? 'long' : 'short';
+
+      return { size: candleSize, atr14, isLarge, direction };
+    } catch (err) {
+      log.debug({ err, symbol }, '15m candle analysis failed');
+      return null;
+    }
+  }
+
   async analyze(symbol: string): Promise<MarketSnapshot | null> {
     try {
       await this.updateMidPrices();
@@ -195,6 +220,9 @@ export class MarketAnalyzer {
         log.debug({ err, symbol }, 'OI data not available');
       }
 
+      // 15m candle analysis (v3)
+      const candle15m = await this.analyze15mCandle(symbol) ?? undefined;
+
       // Trend determination
       let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
       if (indicators.ema9 > indicators.ema21 && indicators.rsi14 > 50) {
@@ -225,6 +253,7 @@ export class MarketAnalyzer {
         volumeRatio,
         oiChange1h,
         atrAvg20: indicators.atrAvg20,
+        candle15m,
       };
     } catch (err) {
       log.error({ err, symbol }, 'Market analysis failed');

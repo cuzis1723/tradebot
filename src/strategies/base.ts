@@ -21,6 +21,11 @@ export abstract class Strategy extends EventEmitter {
   protected dailyPnlResetDate = '';
   protected log;
 
+  // Consecutive loss tracking (v3: auto position reduction)
+  protected consecutiveLosses = 0;
+  protected lossSizeMultiplier = 1.0;
+  protected isAutoStopped = false;
+
   /** Shared market state from Brain (updated every 30min comprehensive + 5min urgent) */
   private _marketState: Readonly<MarketState> | null = null;
 
@@ -68,6 +73,24 @@ export abstract class Strategy extends EventEmitter {
       this.winningTrades++;
     } else if (pnl.lessThan(0)) {
       this.losingTrades++;
+    }
+
+    // Consecutive loss tracking (v3)
+    if (pnl.lessThan(0)) {
+      this.consecutiveLosses++;
+      if (this.consecutiveLosses >= 3) {
+        this.lossSizeMultiplier = 0;
+        this.isAutoStopped = true;
+        this.pause();
+        this.log.error({ consecutiveLosses: this.consecutiveLosses }, 'Auto-stopped: 3 consecutive losses');
+      } else if (this.consecutiveLosses >= 2) {
+        this.lossSizeMultiplier = 0.5;
+        this.log.warn({ consecutiveLosses: this.consecutiveLosses, multiplier: 0.5 }, 'Position size reduced: 2 consecutive losses');
+      }
+    } else {
+      this.consecutiveLosses = 0;
+      this.lossSizeMultiplier = 1.0;
+      this.isAutoStopped = false;
     }
 
     // Track daily PnL
@@ -118,6 +141,25 @@ export abstract class Strategy extends EventEmitter {
 
   isRunning(): boolean {
     return this.status === 'running';
+  }
+
+  getConsecutiveLosses(): number {
+    return this.consecutiveLosses;
+  }
+
+  getLossSizeMultiplier(): number {
+    return this.lossSizeMultiplier;
+  }
+
+  getIsAutoStopped(): boolean {
+    return this.isAutoStopped;
+  }
+
+  resetConsecutiveLosses(): void {
+    this.consecutiveLosses = 0;
+    this.lossSizeMultiplier = 1.0;
+    this.isAutoStopped = false;
+    this.log.info('Consecutive losses reset manually');
   }
 
   /** Called by Engine when Brain updates the market state */

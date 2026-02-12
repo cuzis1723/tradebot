@@ -79,21 +79,14 @@ export class TradingEngine {
       stopAll: () => this.stop(),
     });
 
-    // Start all strategies with direct capital allocation
+    // Start all strategies with v3 capital allocation (id-based)
     const totalCapital = new Decimal(config.initialCapitalUsd);
+    const capitalPctMap: Record<string, number> = {
+      discretionary: config.discretionaryCapitalPct,
+      momentum: config.momentumCapitalPct,
+    };
     for (const [id, strategy] of this.strategies) {
-      let capitalPct: number;
-      switch (strategy.tier) {
-        case 'foundation':
-          capitalPct = (config.gridCapitalPct + config.fundingArbCapitalPct) / this.countByTier('foundation');
-          break;
-        case 'growth':
-          capitalPct = config.momentumCapitalPct / this.countByTier('growth');
-          break;
-        case 'moonshot':
-          capitalPct = config.sniperCapitalPct / this.countByTier('moonshot');
-          break;
-      }
+      const capitalPct = capitalPctMap[id] ?? 10;
       const capital = totalCapital.mul(capitalPct).div(100);
 
       try {
@@ -150,14 +143,6 @@ export class TradingEngine {
     log.info('Trading engine started successfully');
   }
 
-  private countByTier(tier: string): number {
-    let count = 0;
-    for (const s of this.strategies.values()) {
-      if (s.tier === tier) count++;
-    }
-    return Math.max(count, 1);
-  }
-
   private async onPriceTick(data: Record<string, string>): Promise<void> {
     for (const [_id, strategy] of this.strategies) {
       if (!strategy.isRunning()) continue;
@@ -193,6 +178,8 @@ export class TradingEngine {
         for (const strategy of this.strategies.values()) {
           strategy.pause();
         }
+      } else if (globalCheck.level === 'warning') {
+        await sendAlert(`⚠️ <b>DRAWDOWN WARNING</b>\n\nCurrent drawdown: ${globalCheck.drawdownPct?.toFixed(1)}%\nLimit: ${this.riskManager.getLimits().maxGlobalDrawdownPct}%`);
       }
 
       log.info({

@@ -56,6 +56,17 @@ export class MarketScorer {
       });
     }
 
+    // 15m candle spike > 2x ATR(14) — v3
+    if (snapshot.candle15m?.isLarge) {
+      flags.push({
+        name: '15m_candle_spike',
+        category: 'price_15m',
+        score: 2,
+        direction: snapshot.candle15m.direction,
+        detail: `15m candle spike: size ${snapshot.candle15m.size.toFixed(2)} > 2x ATR(14) ${snapshot.candle15m.atr14.toFixed(2)} (${snapshot.candle15m.direction})`,
+      });
+    }
+
     // --- MOMENTUM CATEGORY ---
 
     // RSI extreme
@@ -254,7 +265,7 @@ export class MarketScorer {
         for (const infoFlag of symbolInfoFlags) {
           score.flags.push({
             name: `info_${infoFlag.name}`,
-            category: 'cross', // info sources are cross-market signals
+            category: 'external',
             score: infoFlag.score,
             direction: infoFlag.direction,
             detail: `[${infoFlag.source}] ${infoFlag.detail}`,

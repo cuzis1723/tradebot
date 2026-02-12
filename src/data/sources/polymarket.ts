@@ -53,11 +53,18 @@ interface GammaMarket {
   closed: boolean;
 }
 
+interface ProbabilityHistoryEntry {
+  timestamp: number;
+  probability: number;
+}
+
 export class PolymarketSource {
   private cache: PredictionMarket[] = [];
   private lastFetch = 0;
   private readonly FETCH_INTERVAL_MS = 10 * 60 * 1000; // 10 min cache
   private previousProbabilities: Map<string, number> = new Map();
+  // 30-minute probability history for rapid_shift detection (v3)
+  private probabilityHistory: Map<string, ProbabilityHistoryEntry[]> = new Map();
 
   async fetchMarkets(): Promise<PredictionMarket[]> {
     const now = Date.now();
@@ -122,6 +129,14 @@ export class PolymarketSource {
 
           // Store current probability for next delta calculation
           this.previousProbabilities.set(market.id, probability);
+
+          // Track 30min probability history (v3: rapid_shift detection)
+          const history = this.probabilityHistory.get(market.id) ?? [];
+          history.push({ timestamp: now, probability });
+          // Prune entries older than 35 min
+          const cutoff = now - 35 * 60 * 1000;
+          const pruned = history.filter(h => h.timestamp > cutoff);
+          this.probabilityHistory.set(market.id, pruned);
         }
       }
 
@@ -156,6 +171,29 @@ export class PolymarketSource {
             relevantSymbol: symbol,
             detail: `Polymarket "${market.question.slice(0, 60)}": ${(market.prevProbability * 100).toFixed(0)}% → ${(market.probability * 100).toFixed(0)}% (${probDelta > 0 ? '+' : ''}${(probDelta * 100).toFixed(1)}%)`,
           });
+        }
+      }
+
+      // Rapid shift: >15%p change within 30 minutes (v3 — scorer +4)
+      const history = this.probabilityHistory.get(market.id);
+      if (history && history.length >= 2) {
+        const oldest = history[0];
+        const timeDiffMs = Date.now() - oldest.timestamp;
+        if (timeDiffMs >= 5 * 60 * 1000) { // need at least 5min of data
+          const rapidDelta = market.probability - oldest.probability;
+          const absRapidDelta = Math.abs(rapidDelta);
+          if (absRapidDelta >= 0.15) { // 15%p shift within 30min window
+            for (const symbol of market.relevantSymbols) {
+              flags.push({
+                source: 'polymarket',
+                name: 'rapid_shift',
+                score: 4,
+                direction: this.inferDirection(market, rapidDelta),
+                relevantSymbol: symbol,
+                detail: `Polymarket RAPID "${market.question.slice(0, 50)}": ${(oldest.probability * 100).toFixed(0)}% → ${(market.probability * 100).toFixed(0)}% in ${Math.round(timeDiffMs / 60_000)}min (${rapidDelta > 0 ? '+' : ''}${(rapidDelta * 100).toFixed(1)}%p)`,
+              });
+            }
+          }
         }
       }
 

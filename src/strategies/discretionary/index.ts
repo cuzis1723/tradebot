@@ -143,9 +143,15 @@ export class DiscretionaryStrategy extends Strategy {
   // === Trade Execution ===
 
   private async executeProposal(proposal: TradeProposal): Promise<string> {
+    // Block execution if auto-stopped due to consecutive losses
+    if (this.isAutoStopped) {
+      this.log.warn({ proposal: proposal.id }, 'Proposal execution blocked: auto-stopped (3 consecutive losses)');
+      return 'Execution blocked: strategy auto-stopped after 3 consecutive losses. Use /resume to reset.';
+    }
+
     const hl = getHyperliquidClient();
 
-    const capitalForTrade = this.allocatedCapital.mul(proposal.size);
+    const capitalForTrade = this.allocatedCapital.mul(proposal.size).mul(this.lossSizeMultiplier);
     const sizeInUnits = capitalForTrade.mul(proposal.leverage).div(proposal.entryPrice);
     const sz = parseFloat(sizeInUnits.toFixed(4));
 

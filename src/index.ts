@@ -1,9 +1,7 @@
 import { TradingEngine } from './core/engine.js';
-import { GridStrategy } from './strategies/grid/index.js';
 import { DiscretionaryStrategy } from './strategies/discretionary/index.js';
 import { MomentumStrategy } from './strategies/momentum/index.js';
 import {
-  defaultGridConfig,
   defaultDiscretionaryConfig,
   defaultMomentumConfig,
   defaultBrainConfig,
@@ -19,10 +17,7 @@ async function main(): Promise<void> {
   // Engine now requires BrainConfig
   const engine = new TradingEngine(defaultBrainConfig);
 
-  // Register strategies
-  const gridStrategy = new GridStrategy(defaultGridConfig);
-  engine.addStrategy(gridStrategy);
-
+  // Register strategies (v3: Grid removed, only Discretionary + Momentum)
   const momentumStrategy = new MomentumStrategy(defaultMomentumConfig);
   engine.addStrategy(momentumStrategy);
 

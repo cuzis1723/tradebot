@@ -18,7 +18,7 @@ export class RiskManager {
       maxPositionSizePct: limits?.maxPositionSizePct ?? 5,
       maxDailyLossPct: limits?.maxDailyLossPct ?? config.maxDailyLossPct,
       maxOpenPositions: limits?.maxOpenPositions ?? 20,
-      maxLeverage: limits?.maxLeverage ?? 5,
+      maxLeverage: limits?.maxLeverage ?? 15,
     };
   }
 
@@ -69,8 +69,8 @@ export class RiskManager {
     }
   }
 
-  checkGlobalDrawdown(): RiskCheckResult {
-    if (this.peakPortfolioValue.isZero()) return { approved: true };
+  checkGlobalDrawdown(): RiskCheckResult & { drawdownPct?: number; level?: 'normal' | 'warning' | 'critical' } {
+    if (this.peakPortfolioValue.isZero()) return { approved: true, drawdownPct: 0, level: 'normal' };
 
     const drawdownPct = this.peakPortfolioValue
       .minus(this.currentPortfolioValue)
@@ -78,6 +78,7 @@ export class RiskManager {
       .mul(100)
       .toNumber();
 
+    // Critical: hard stop at maxGlobalDrawdownPct (20%)
     if (drawdownPct >= this.limits.maxGlobalDrawdownPct) {
       log.error(
         { drawdown: drawdownPct, peak: this.peakPortfolioValue.toString(), current: this.currentPortfolioValue.toString() },
@@ -85,11 +86,22 @@ export class RiskManager {
       );
       return {
         approved: false,
+        drawdownPct,
+        level: 'critical',
         reason: `Global drawdown ${drawdownPct.toFixed(1)}% exceeds limit ${this.limits.maxGlobalDrawdownPct}%`,
       };
     }
 
-    return { approved: true };
+    // Warning at 15%
+    if (drawdownPct >= 15) {
+      log.warn(
+        { drawdown: drawdownPct, peak: this.peakPortfolioValue.toString(), current: this.currentPortfolioValue.toString() },
+        'DRAWDOWN WARNING - approaching limit'
+      );
+      return { approved: true, drawdownPct, level: 'warning' };
+    }
+
+    return { approved: true, drawdownPct, level: 'normal' };
   }
 
   getLimits(): RiskLimits {
