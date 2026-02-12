@@ -9,8 +9,18 @@ const LLAMA_API_BASE = 'https://api.llama.fi';
 const TRACKED_CHAINS: Record<string, string[]> = {
   Ethereum: ['ETH-PERP'],
   Solana: ['SOL-PERP'],
-  // Bitcoin L2s / sidechains signal BTC ecosystem health
   Bitcoin: ['BTC-PERP'],
+  Avalanche: ['AVAX-PERP'],
+  Polygon: ['MATIC-PERP'],
+  Arbitrum: ['ARB-PERP'],
+  Optimism: ['OP-PERP'],
+  Near: ['NEAR-PERP'],
+  Aptos: ['APT-PERP'],
+  Sui: ['SUI-PERP'],
+  Injective: ['INJ-PERP'],
+  Sei: ['SEI-PERP'],
+  Celestia: ['TIA-PERP'],
+  Starknet: ['STRK-PERP'],
 };
 
 interface LlamaChain {

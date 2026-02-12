@@ -1,4 +1,4 @@
-import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig, EquityCrossConfig } from '../core/types.js';
+import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig, EquityCrossConfig, DynamicSymbolConfig } from '../core/types.js';
 
 export const defaultGridConfig: GridConfig = {
   symbol: 'ETH-PERP',
@@ -52,8 +52,17 @@ export const defaultEquityCrossConfig: EquityCrossConfig = {
   correlationWindow: 24, // 24 x 1h candles for rolling correlation
 };
 
+export const defaultDynamicSymbolConfig: DynamicSymbolConfig = {
+  enabled: true,
+  minVolume24h: 10_000_000,       // $10M daily volume floor
+  minOpenInterest: 2_000_000,     // $2M OI floor
+  maxSymbols: 20,                 // analyze up to 20 symbols per cycle
+  preScreenThreshold: 1,          // min pre-screen score to warrant full analysis
+};
+
 export const defaultBrainConfig: BrainConfig = {
-  symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+  symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],  // core: always analyzed
+  dynamicSymbols: defaultDynamicSymbolConfig,
   comprehensiveIntervalMs: 30 * 60 * 1000,  // 30 minutes
   urgentScanIntervalMs: 5 * 60 * 1000,      // 5 minutes
   maxDailyComprehensive: 48,                  // every 30min for 24h
