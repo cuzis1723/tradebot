@@ -1,10 +1,20 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config/index.js';
 import { createChildLogger } from '../../monitoring/logger.js';
-import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore } from '../../core/types.js';
+import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore, MarketRegime, MarketDirection, BrainDirectives } from '../../core/types.js';
 import { randomUUID } from 'crypto';
 
 const log = createChildLogger('llm-advisor');
+
+/** Response from comprehensive analysis (30-min Brain cycle) */
+export interface ComprehensiveResponse {
+  regime: MarketRegime;
+  direction: MarketDirection;
+  riskLevel: number;
+  confidence: number;
+  reasoning: string;
+  directives?: Partial<BrainDirectives>;
+}
 
 const SYSTEM_PROMPT = `You are the core decision engine of an automated crypto perpetual futures trading bot on Hyperliquid.
 
@@ -359,6 +369,104 @@ export class LLMAdvisor {
     } catch {
       // If JSON parsing fails, treat as plain text analysis
       return { action: 'analysis', content: response };
+    }
+  }
+
+  /**
+   * Comprehensive market analysis for the Brain's 30-min cycle.
+   * Uses a separate conversation (doesn't pollute trade history).
+   */
+  async comprehensiveAnalysis(context: string): Promise<ComprehensiveResponse | null> {
+    if (!this.client) throw new Error('LLM advisor not available');
+
+    const COMPREHENSIVE_SYSTEM_PROMPT = `You are the strategic brain of a crypto trading bot on Hyperliquid.
+
+## Your Role
+Every 30 minutes, you assess the overall market state and provide strategic directives.
+You are NOT making individual trade decisions here — you are setting the CONTEXT for strategies.
+
+## What You Assess
+1. Market Regime: trending_up, trending_down, range, volatile, unknown
+2. Direction: bullish, bearish, neutral
+3. Risk Level: 1 (calm) to 5 (extreme danger)
+4. Strategy Directives: how each strategy should adjust
+
+## Portfolio: ~$1,000 total
+- Discretionary (55%): LLM-guided, semi-auto
+- Momentum (25%): EMA crossover, auto
+- Cash (10%): reserves
+
+## Response: JSON only, no markdown.
+{
+  "regime": "trending_up",
+  "direction": "bullish",
+  "risk_level": 2,
+  "confidence": 75,
+  "reasoning": "Brief explanation",
+  "directives": {
+    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
+    "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
+  }
+}`;
+
+    try {
+      const response = await this.client.messages.create({
+        model: config.anthropicModel,
+        max_tokens: 512,
+        system: COMPREHENSIVE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: context }],
+      });
+
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+      return this.parseComprehensiveResponse(text);
+    } catch (err) {
+      log.error({ err }, 'Comprehensive LLM call failed');
+      return null;
+    }
+  }
+
+  private parseComprehensiveResponse(response: string): ComprehensiveResponse | null {
+    try {
+      let jsonStr = response;
+      const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+      const data = JSON.parse(jsonStr);
+
+      const result: ComprehensiveResponse = {
+        regime: data.regime ?? 'unknown',
+        direction: data.direction ?? 'neutral',
+        riskLevel: Math.min(5, Math.max(1, data.risk_level ?? 3)),
+        confidence: Math.min(100, Math.max(0, data.confidence ?? 50)),
+        reasoning: data.reasoning ?? '',
+      };
+
+      if (data.directives) {
+        result.directives = {};
+        if (data.directives.discretionary) {
+          const d = data.directives.discretionary;
+          result.directives.discretionary = {
+            active: d.active ?? true,
+            bias: d.bias ?? 'neutral',
+            focusSymbols: d.focus_symbols ?? [],
+            maxLeverage: Math.min(20, d.max_leverage ?? 5),
+          };
+        }
+        if (data.directives.momentum) {
+          const m = data.directives.momentum;
+          result.directives.momentum = {
+            active: m.active ?? true,
+            leverageMultiplier: Math.min(2, Math.max(0.2, m.leverage_multiplier ?? 1.0)),
+            allowLong: m.allow_long ?? true,
+            allowShort: m.allow_short ?? true,
+          };
+        }
+      }
+
+      return result;
+    } catch {
+      log.warn({ response: response.slice(0, 200) }, 'Failed to parse comprehensive response');
+      return null;
     }
   }
 

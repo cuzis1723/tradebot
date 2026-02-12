@@ -89,6 +89,12 @@ export class MomentumStrategy extends Strategy {
   private async scanAll(): Promise<void> {
     if (!this.isRunning()) return;
 
+    // Brain can disable Momentum strategy
+    if (this.marketState?.directives.momentum.active === false) {
+      this.log.debug('Momentum scan skipped: disabled by Brain directive');
+      return;
+    }
+
     const now = Date.now();
     if (now - this.lastScanTime < this.SCAN_INTERVAL_MS * 0.8) return;
     this.lastScanTime = now;
@@ -149,11 +155,21 @@ export class MomentumStrategy extends Strategy {
     if (state && now2 - state.lastSignalTime < this.SIGNAL_COOLDOWN_MS) return null;
 
     if (bullishCross && rsi < this.config.rsiOverbought && rsi > this.config.rsiOversold) {
+      // Brain directive filter: check if long is allowed
+      if (this.marketState?.directives.momentum.allowLong === false) {
+        this.log.info({ symbol }, 'LONG signal suppressed by Brain directive (allowLong=false)');
+        return null;
+      }
       this.log.info({ symbol, fastEma, slowEma, rsi }, 'LONG signal: EMA bullish cross');
       return 'long';
     }
 
     if (bearishCross && rsi > this.config.rsiOversold && rsi < this.config.rsiOverbought) {
+      // Brain directive filter: check if short is allowed
+      if (this.marketState?.directives.momentum.allowShort === false) {
+        this.log.info({ symbol }, 'SHORT signal suppressed by Brain directive (allowShort=false)');
+        return null;
+      }
       this.log.info({ symbol, fastEma, slowEma, rsi }, 'SHORT signal: EMA bearish cross');
       return 'short';
     }
@@ -208,16 +224,18 @@ export class MomentumStrategy extends Strategy {
       ? currentPrice + 3 * atr
       : currentPrice - 3 * atr;
 
-    // Position sizing: equal allocation per symbol, volatility-adjusted
+    // Position sizing: equal allocation per symbol, Brain-adjusted leverage
     const capitalPerSymbol = this.allocatedCapital.div(this.config.symbols.length);
-    const notional = capitalPerSymbol.mul(this.config.leverage);
+    const leverageMultiplier = this.marketState?.directives.momentum.leverageMultiplier ?? 1.0;
+    const effectiveLeverage = Math.max(1, Math.round(this.config.leverage * leverageMultiplier));
+    const notional = capitalPerSymbol.mul(effectiveLeverage);
     const size = notional.div(currentPrice);
     const sz = parseFloat(size.toFixed(4));
 
     if (sz <= 0) return;
 
     try {
-      await hl.updateLeverage(symbol, this.config.leverage, 'cross');
+      await hl.updateLeverage(symbol, effectiveLeverage, 'cross');
 
       const result = await hl.placeOrder({
         coin: symbol,

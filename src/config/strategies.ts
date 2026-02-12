@@ -1,4 +1,4 @@
-import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig } from '../core/types.js';
+import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig } from '../core/types.js';
 
 export const defaultGridConfig: GridConfig = {
   symbol: 'ETH-PERP',
@@ -31,6 +31,24 @@ export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
   capitalUsd: 600,
   leverage: 5,
-  analysisIntervalMs: 5 * 60 * 1000, // 5 minutes
+  analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
+};
+
+export const defaultBrainConfig: BrainConfig = {
+  symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+  comprehensiveIntervalMs: 30 * 60 * 1000,  // 30 minutes
+  urgentScanIntervalMs: 5 * 60 * 1000,      // 5 minutes
+  maxDailyComprehensive: 48,                  // every 30min for 24h
+  maxDailyUrgentLLM: 12,                      // max 12 urgent LLM calls/day
+  scorer: {
+    scanIntervalMs: 5 * 60 * 1000,            // 5 min (used by scorer internals)
+    llmThreshold: 8,
+    alertThreshold: 5,
+    symbolCooldownMs: 2 * 60 * 60 * 1000,     // 2h
+    globalCooldownMs: 30 * 60 * 1000,          // 30min
+    maxDailyCalls: 12,
+    lossCooldownMs: 4 * 60 * 60 * 1000,       // 4h
+    maxConsecutiveLosses: 2,
+  },
 };

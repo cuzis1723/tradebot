@@ -1,6 +1,6 @@
 import { Decimal } from 'decimal.js';
 import { EventEmitter } from 'events';
-import type { StrategyTier, StrategyStatus, TradeSignal, FilledOrder, StrategyPerformance, TradingMode } from '../core/types.js';
+import type { StrategyTier, StrategyStatus, TradeSignal, FilledOrder, StrategyPerformance, TradingMode, MarketState } from '../core/types.js';
 import { createChildLogger } from '../monitoring/logger.js';
 
 export abstract class Strategy extends EventEmitter {
@@ -20,6 +20,9 @@ export abstract class Strategy extends EventEmitter {
   protected dailyPnl: Decimal = new Decimal(0);
   protected dailyPnlResetDate = '';
   protected log;
+
+  /** Shared market state from Brain (updated every 30min comprehensive + 5min urgent) */
+  private _marketState: Readonly<MarketState> | null = null;
 
   constructor() {
     super();
@@ -115,5 +118,15 @@ export abstract class Strategy extends EventEmitter {
 
   isRunning(): boolean {
     return this.status === 'running';
+  }
+
+  /** Called by Engine when Brain updates the market state */
+  setMarketState(state: Readonly<MarketState>): void {
+    this._marketState = state;
+  }
+
+  /** Access current market state from Brain */
+  protected get marketState(): Readonly<MarketState> | null {
+    return this._marketState;
   }
 }
