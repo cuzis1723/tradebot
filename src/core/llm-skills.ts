@@ -2,7 +2,11 @@
  * LLM Skills — Anthropic Tool Use definitions + executor
  *
  * Gives the LLM (Brain/Advisor) the ability to directly call Hyperliquid
- * operations: check balances, transfer funds, place/close orders, etc.
+ * operations: check balances, place/close orders, etc.
+ *
+ * NOTE: Hyperliquid uses a Unified Account model — Spot USDC is automatically
+ * used as Perp margin. There is NO separate Spot/Perp wallet, and NO need
+ * to transfer USDC between them.
  */
 import type Anthropic from '@anthropic-ai/sdk';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
@@ -17,13 +21,13 @@ const log = createChildLogger('llm-skills');
 export const TRADING_TOOLS: Anthropic.Tool[] = [
   // --- Read: Account ---
   {
-    name: 'get_perp_balance',
-    description: 'Get the perpetual trading account balance, margin info, and all open positions.',
+    name: 'get_balance',
+    description: 'Get the unified account balance (Spot+Perp combined), margin info, and all open perp positions. Hyperliquid uses a unified account — Spot USDC is automatically used as perp margin.',
     input_schema: { type: 'object' as const, properties: {}, required: [] },
   },
   {
-    name: 'get_spot_balance',
-    description: 'Get spot wallet balances (USDC, tokens). Use this to check if USDC needs to be transferred to perp.',
+    name: 'get_spot_holdings',
+    description: 'Get spot token holdings (e.g. HYPE, PURR). Note: In unified account, USDC balance is already included in get_balance. This only shows non-USDC spot tokens.',
     input_schema: { type: 'object' as const, properties: {}, required: [] },
   },
   {
@@ -82,30 +86,6 @@ export const TRADING_TOOLS: Anthropic.Tool[] = [
         hours: { type: 'number', description: 'Lookback window in hours. Default: 24.' },
       },
       required: [],
-    },
-  },
-
-  // --- Write: Transfers ---
-  {
-    name: 'transfer_spot_to_perp',
-    description: 'Transfer USDC from Spot wallet to Perp wallet. Required before perp trading if funds are in spot.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        amount: { type: 'number', description: 'USDC amount to transfer from Spot to Perp' },
-      },
-      required: ['amount'],
-    },
-  },
-  {
-    name: 'transfer_perp_to_spot',
-    description: 'Transfer USDC from Perp wallet back to Spot wallet.',
-    input_schema: {
-      type: 'object' as const,
-      properties: {
-        amount: { type: 'number', description: 'USDC amount to transfer from Perp to Spot' },
-      },
-      required: ['amount'],
     },
   },
 
@@ -208,15 +188,23 @@ export async function executeToolCall(
 
   try {
     switch (toolName) {
-      // --- Read: Account ---
-      case 'get_perp_balance': {
-        const state = await hl.getAccountState();
+      // --- Read: Account (Unified) ---
+      case 'get_balance': {
+        const [state, spotState] = await Promise.all([
+          hl.getAccountState(),
+          hl.getSpotBalances(),
+        ]);
         const positions = state.assetPositions.filter(
           ap => parseFloat(ap.position.szi) !== 0,
         );
+        const spotTokens = spotState.balances.filter(
+          b => parseFloat(b.total) > 0 && b.coin !== 'USDC',
+        );
         return JSON.stringify({
+          _note: 'Unified account — Spot USDC is automatically used as perp margin',
           account_value: state.marginSummary.accountValue,
           margin_used: state.marginSummary.totalMarginUsed,
+          free_margin: (parseFloat(state.marginSummary.accountValue) - parseFloat(state.marginSummary.totalMarginUsed)).toFixed(2),
           notional_position: state.marginSummary.totalNtlPos,
           positions: positions.map(ap => ({
             coin: ap.position.coin,
@@ -226,17 +214,23 @@ export async function executeToolCall(
             unrealized_pnl: ap.position.unrealizedPnl,
             leverage: ap.position.leverage,
           })),
+          spot_tokens: spotTokens.length > 0
+            ? spotTokens.map(b => ({ coin: b.coin, total: b.total, hold: b.hold }))
+            : [],
         });
       }
 
-      case 'get_spot_balance': {
+      case 'get_spot_holdings': {
         const spotState = await hl.getSpotBalances();
         const nonZero = spotState.balances.filter(b => parseFloat(b.total) > 0);
-        return JSON.stringify(nonZero.map(b => ({
-          coin: b.coin,
-          total: b.total,
-          hold: b.hold,
-        })));
+        return JSON.stringify({
+          _note: 'Unified account — USDC is shared with perp margin, shown here for completeness',
+          holdings: nonZero.map(b => ({
+            coin: b.coin,
+            total: b.total,
+            hold: b.hold,
+          })),
+        });
       }
 
       case 'get_open_orders': {
@@ -308,19 +302,6 @@ export async function executeToolCall(
           };
         });
         return JSON.stringify({ total_usdc: total.toFixed(4), entries });
-      }
-
-      // --- Write: Transfers ---
-      case 'transfer_spot_to_perp': {
-        const amount = input.amount as number;
-        const success = await hl.transferSpotToPerp(amount);
-        return JSON.stringify({ success, amount, direction: 'spot_to_perp' });
-      }
-
-      case 'transfer_perp_to_spot': {
-        const amount = input.amount as number;
-        const success = await hl.transferPerpToSpot(amount);
-        return JSON.stringify({ success, amount, direction: 'perp_to_spot' });
       }
 
       // --- Write: Orders ---

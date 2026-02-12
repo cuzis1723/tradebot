@@ -199,7 +199,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
       const totalNtlPos = parseFloat(state.marginSummary.totalNtlPos);
       const freeMargin = accountValue - marginUsed;
 
-      let msg = `<b>Account Balance</b>\n\n`;
+      let msg = `<b>Account Balance (Unified)</b>\n\n`;
       msg += `Account Value: <b>$${accountValue.toFixed(2)}</b>\n`;
       msg += `Margin Used: $${marginUsed.toFixed(2)}\n`;
       msg += `Free Margin: $${freeMargin.toFixed(2)}\n`;
@@ -436,10 +436,10 @@ export function initTelegram(engine: EngineRef): Bot | null {
       const hl = getHyperliquidClient();
       const spotState = await hl.getSpotBalances();
 
-      let msg = '<b>Spot Balances</b>\n\n';
+      let msg = '<b>Spot Token Holdings</b>\n<i>(Unified account — USDC is shared with perp margin)</i>\n\n';
       const nonZero = spotState.balances.filter(b => parseFloat(b.total) > 0);
       if (nonZero.length === 0) {
-        msg += 'No spot balances.';
+        msg += 'No spot token holdings.';
       } else {
         for (const b of nonZero) {
           msg += `${b.coin}: <b>${parseFloat(b.total).toFixed(4)}</b>`;
@@ -461,7 +461,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
     const direction = parts[2]?.toLowerCase();
 
     if (!amount || !direction || !['s2p', 'p2s'].includes(direction)) {
-      await ctx.reply('Usage: /transfer &lt;amount&gt; &lt;s2p|p2s&gt;\n\ns2p = Spot→Perp\np2s = Perp→Spot', { parse_mode: 'HTML' });
+      await ctx.reply('Usage: /transfer &lt;amount&gt; &lt;s2p|p2s&gt;\n\n<i>Note: Unified account — Spot USDC is auto-used as perp margin. Transfer is typically not needed.</i>', { parse_mode: 'HTML' });
       return;
     }
 
@@ -717,7 +717,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/info refresh - Force re-fetch all sources\n'
       + '\n<b>Account &amp; Wallet:</b>\n'
       + '/balance - Perp account balance &amp; positions\n'
-      + '/spotbalance - Spot wallet balances\n'
+      + '/spotbalance - Spot token holdings\n'
       + '/transfer &lt;amt&gt; &lt;s2p|p2s&gt; - Spot↔Perp transfer\n'
       + '/withdraw &lt;amt&gt; &lt;addr&gt; - Bridge withdrawal\n'
       + '/orders - Open orders\n'
