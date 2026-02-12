@@ -98,17 +98,18 @@
   <!-- Summary Cards -->
   <div class="grid grid-4">
     <div class="card">
-      <div class="card-title">Balance (Unified)</div>
-      <div class="card-value" id="balance">-</div>
-      <div class="card-sub" id="balanceDetail"></div>
+      <div class="card-title">Equity (Balance + uPnL)</div>
+      <div class="card-value" id="equity">-</div>
+      <div class="card-sub" id="equityDetail"></div>
     </div>
     <div class="card">
-      <div class="card-title">Total PnL</div>
-      <div class="card-value" id="totalPnl">-</div>
+      <div class="card-title">Unrealized PnL</div>
+      <div class="card-value" id="unrealizedPnl">-</div>
+      <div class="card-sub" id="posCount"></div>
     </div>
     <div class="card">
-      <div class="card-title">Win Rate</div>
-      <div class="card-value" id="winRate">-</div>
+      <div class="card-title">Realized PnL</div>
+      <div class="card-value" id="realizedPnl">-</div>
       <div class="card-sub" id="tradeCount"></div>
     </div>
     <div class="card">
@@ -139,6 +140,12 @@
     <div class="decision-feed" id="decisionFeed">
       <div style="color:var(--text2);padding:8px 0">Loading decisions...</div>
     </div>
+  </div>
+
+  <!-- Equity Trend Chart -->
+  <div class="card chart-card" style="margin-bottom:12px;">
+    <h3>Equity Trend (Balance + Unrealized PnL)</h3>
+    <div class="chart-wrap"><canvas id="equityChart"></canvas></div>
   </div>
 
   <!-- Charts -->
@@ -173,19 +180,23 @@
     </div>
   </div>
 
-  <!-- Recent Trades -->
+  <!-- Recent Trades (Exchange Fills) -->
   <div class="card" style="margin-top:12px;">
-    <div class="section-title">Recent Trades</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="section-title">Recent Trades</div>
+      <span class="refresh-info" id="fillsCount"></span>
+    </div>
     <table>
-      <thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Side</th><th>Price</th><th>Size</th><th>PnL</th></tr></thead>
-      <tbody id="trades"></tbody>
+      <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Price</th><th>Size</th><th>PnL</th><th>Fee</th></tr></thead>
+      <tbody id="fills"></tbody>
     </table>
   </div>
 </div>
 
 <script>
 const $ = s => document.getElementById(s);
-let pnlChart, dailyChart;
+let pnlChart, dailyChart, equityChart;
+const equityHistory = []; // in-memory equity snapshots
 
 function fmtUsd(v) {
   if (v === undefined || v === null) return '-';
@@ -217,16 +228,29 @@ function initCharts() {
       y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
     },
   };
+  const equityOpts = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: '#8b949e', font: { size: 11 } } } },
+    scales: {
+      x: { ticks: { color: '#8b949e', maxTicksLimit: 12, font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: v => '$' + v.toFixed(0) }, grid: { color: '#21262d' } },
+    },
+  };
+  equityChart = new Chart($('equityChart'), { type: 'line', data: { labels: [], datasets: [
+    { label: 'Equity', data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 2 },
+    { label: 'Balance', data: [], borderColor: '#3fb950', borderDash: [4,4], tension: 0.3, pointRadius: 0 },
+  ] }, options: equityOpts });
   pnlChart = new Chart($('pnlChart'), { type: 'line', data: { labels: [], datasets: [{ data: [], borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.08)', fill: true, tension: 0.3, pointRadius: 2 }] }, options: opts });
   dailyChart = new Chart($('dailyChart'), { type: 'bar', data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] }, options: opts });
 }
 
 async function refresh() {
-  const [status, balance, pnlData, trades, positions, scores, stats, decisions] = await Promise.all([
+  const [status, balance, equity, pnlData, fills, positions, scores, stats, decisions] = await Promise.all([
     fetchJson('/api/status'),
     fetchJson('/api/balance'),
+    fetchJson('/api/equity'),
     fetchJson('/api/daily-pnl?days=60'),
-    fetchJson('/api/trades?limit=30'),
+    fetchJson('/api/fills?limit=50'),
     fetchJson('/api/positions'),
     fetchJson('/api/scores'),
     fetchJson('/api/stats'),
@@ -239,19 +263,40 @@ async function refresh() {
     $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
   }
 
-  // Balance (Unified)
-  if (balance) {
-    $('balance').textContent = '$' + Number(balance.balance).toFixed(2);
-    $('balanceDetail').textContent = 'Free: $' + Number(balance.freeMargin).toFixed(2) + ' | Margin: $' + Number(balance.marginUsed).toFixed(2);
+  // Equity (Balance + Unrealized PnL)
+  if (equity) {
+    $('equity').textContent = '$' + Number(equity.equity).toFixed(2);
+    $('equityDetail').textContent = 'Balance: $' + Number(equity.balance).toFixed(2);
+
+    const uEl = $('unrealizedPnl');
+    uEl.textContent = fmtUsd(equity.unrealizedPnl);
+    uEl.className = 'card-value ' + pnlClass(equity.unrealizedPnl);
+    $('posCount').textContent = (positions?.length ?? 0) + ' open positions';
+
+    // Track equity over time (in-memory, resets on page reload)
+    const now = new Date();
+    const label = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    equityHistory.push({ label, equity: equity.equity, balance: equity.balance });
+    if (equityHistory.length > 120) equityHistory.shift(); // keep ~1h at 30s intervals
+
+    equityChart.data.labels = equityHistory.map(e => e.label);
+    equityChart.data.datasets[0].data = equityHistory.map(e => e.equity);
+    equityChart.data.datasets[1].data = equityHistory.map(e => e.balance);
+    equityChart.update('none');
   }
 
-  // PnL + Stats
-  if (stats) {
-    const el = $('totalPnl');
+  // Realized PnL from fills
+  if (fills && fills.length > 0) {
+    const totalRealizedPnl = fills.reduce((sum, f) => sum + parseFloat(f.closedPnl), 0);
+    const el = $('realizedPnl');
+    el.textContent = fmtUsd(totalRealizedPnl);
+    el.className = 'card-value ' + pnlClass(totalRealizedPnl);
+    $('tradeCount').textContent = fills.length + ' fills total';
+  } else if (stats) {
+    const el = $('realizedPnl');
     el.textContent = fmtUsd(stats.totalPnl);
     el.className = 'card-value ' + pnlClass(stats.totalPnl);
-    $('winRate').textContent = stats.winRate + '%';
-    $('tradeCount').textContent = stats.wins + 'W / ' + stats.losses + 'L (' + stats.totalTrades + ' total)';
+    $('tradeCount').textContent = stats.wins + 'W / ' + stats.losses + 'L';
   }
 
   // LLM
@@ -375,19 +420,26 @@ async function refresh() {
     $('positions').innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center">No open positions</td></tr>';
   }
 
-  // Trades
-  if (trades && trades.length > 0) {
-    $('trades').innerHTML = trades.map(t => `<tr>
-      <td>${fmtTime(t.timestamp)}</td>
-      <td>${t.strategy_id}</td>
-      <td><b>${t.symbol}</b></td>
-      <td class="${t.side === 'buy' ? 'side-buy' : 'side-sell'}">${t.side.toUpperCase()}</td>
-      <td>$${Number(t.price).toFixed(2)}</td>
-      <td>${Number(t.size).toFixed(4)}</td>
-      <td class="${Number(t.pnl) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmtUsd(t.pnl)}</td>
-    </tr>`).join('');
+  // Fills (Exchange Trades)
+  if (fills && fills.length > 0) {
+    $('fillsCount').textContent = fills.length + ' recent fills';
+    $('fills').innerHTML = fills.map(f => {
+      const pnl = parseFloat(f.closedPnl);
+      const fee = parseFloat(f.fee);
+      const pnlStr = pnl !== 0 ? fmtUsd(pnl) : '-';
+      const pnlCls = pnl !== 0 ? (pnl >= 0 ? 'pnl-pos' : 'pnl-neg') : '';
+      return `<tr>
+        <td>${fmtTime(f.time)}</td>
+        <td><b>${f.coin}</b></td>
+        <td class="${f.side === 'B' || f.side === 'buy' ? 'side-buy' : 'side-sell'}">${f.side === 'B' ? 'BUY' : f.side === 'A' ? 'SELL' : f.side.toUpperCase()}</td>
+        <td>$${parseFloat(f.px).toFixed(2)}</td>
+        <td>${parseFloat(f.sz).toFixed(4)}</td>
+        <td class="${pnlCls}">${pnlStr}</td>
+        <td style="color:var(--text2)">$${fee.toFixed(4)}</td>
+      </tr>`;
+    }).join('');
   } else {
-    $('trades').innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center">No trades yet</td></tr>';
+    $('fills').innerHTML = '<tr><td colspan="7" style="color:var(--text2);text-align:center">No fills yet</td></tr>';
   }
 }
 

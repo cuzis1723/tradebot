@@ -730,7 +730,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
 
   bot.command('dashboard', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    const url = config.dashboardUrl ?? `http://localhost:${config.dashboardPort}`;
+    const url = config.dashboardUrl ?? 'http://89.167.31.117:3847';
     await ctx.reply(`<b>Web Dashboard</b>\n\n<a href="${url}">${url}</a>`, { parse_mode: 'HTML' });
   });
 

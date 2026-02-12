@@ -224,6 +224,51 @@ function apiProposals(req: IncomingMessage, res: ServerResponse): void {
   }
 }
 
+function apiFills(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(200, parseInt(url.searchParams.get('limit') ?? '50', 10));
+
+  const hl = getHyperliquidClient();
+  hl.getUserFills().then(fills => {
+    const recent = fills.slice(0, limit);
+    json(res, recent.map(f => ({
+      coin: f.coin,
+      side: f.side,
+      px: f.px,
+      sz: f.sz,
+      time: f.time,
+      closedPnl: f.closedPnl,
+      fee: f.fee,
+      dir: f.dir,
+    })));
+  }).catch(err => {
+    log.warn({ err }, 'Dashboard: fills fetch failed');
+    json(res, [], 500);
+  });
+}
+
+function apiEquity(_req: IncomingMessage, res: ServerResponse): void {
+  const hl = getHyperliquidClient();
+  Promise.all([hl.getAccountState(), hl.getSpotBalances()]).then(([state, spotState]) => {
+    const totalBalance = spotState.balances
+      .filter(b => b.coin.toUpperCase().includes('USDC'))
+      .reduce((sum: number, b) => sum + parseFloat(b.total), 0);
+
+    const positions = state.assetPositions.filter(ap => parseFloat(ap.position.szi) !== 0);
+    const unrealizedPnl = positions.reduce((sum, ap) => sum + parseFloat(ap.position.unrealizedPnl), 0);
+
+    json(res, {
+      balance: totalBalance,
+      unrealizedPnl,
+      equity: totalBalance + unrealizedPnl,
+      timestamp: Date.now(),
+    });
+  }).catch(err => {
+    log.warn({ err }, 'Dashboard: equity fetch failed');
+    json(res, { balance: 0, unrealizedPnl: 0, equity: 0, timestamp: Date.now() }, 500);
+  });
+}
+
 // === Router ===
 
 const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void> = {
@@ -237,6 +282,8 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/stats': apiTradeStats,
   '/api/decisions': apiDecisions,
   '/api/proposals': apiProposals,
+  '/api/fills': apiFills,
+  '/api/equity': apiEquity,
 };
 
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {
