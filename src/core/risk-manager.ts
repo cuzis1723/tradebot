@@ -108,6 +108,10 @@ export class RiskManager {
     return { ...this.limits };
   }
 
+  getCurrentValue(): Decimal {
+    return this.currentPortfolioValue;
+  }
+
   getGlobalDrawdownPct(): number {
     if (this.peakPortfolioValue.isZero()) return 0;
     return this.peakPortfolioValue

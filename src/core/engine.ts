@@ -79,8 +79,7 @@ export class TradingEngine {
       stopAll: () => this.stop(),
     });
 
-    // Start all strategies with v3 capital allocation (id-based)
-    const totalCapital = new Decimal(config.initialCapitalUsd);
+    // Start all strategies with v3 capital allocation based on actual balance
     const capitalPctMap: Record<string, number> = {
       discretionary: config.discretionaryCapitalPct,
       momentum: config.momentumCapitalPct,
@@ -88,7 +87,7 @@ export class TradingEngine {
     };
     for (const [id, strategy] of this.strategies) {
       const capitalPct = capitalPctMap[id] ?? 10;
-      const capital = totalCapital.mul(capitalPct).div(100);
+      const capital = balance.mul(capitalPct).div(100);
 
       try {
         await strategy.start(capital);
@@ -255,7 +254,7 @@ export class TradingEngine {
       uptime: this.running ? Date.now() - this.startTime : 0,
       strategies,
       totalPnl,
-      totalCapital: new Decimal(config.initialCapitalUsd),
+      totalCapital: this.riskManager.getCurrentValue(),
     };
   }
 }
