@@ -214,6 +214,17 @@ export interface HLTwapStatus {
   endTime: number;
 }
 
+// === Trigger Order Types ===
+
+export interface HLTriggerOrderParams {
+  coin: string;
+  isBuy: boolean;
+  size: string;
+  triggerPx: string;
+  tpsl: 'tp' | 'sl';
+  reduceOnly: boolean;
+}
+
 // === Predicted Funding ===
 
 export interface HLPredictedFunding {

@@ -238,7 +238,12 @@ export class MarketScorer {
     const directionFlags = flags.filter(f => f.direction === directionBias && directionBias !== 'neutral');
     if (directionFlags.length >= 3) bonusScore += 2;
 
-    const totalScore = flags.reduce((sum, f) => sum + f.score, 0) + bonusScore;
+    // --- Conflict penalty: deduct when both long and short signals are strong ---
+    const conflictPenalty = (longScore >= 3 && shortScore >= 3)
+      ? Math.min(longScore, shortScore)
+      : 0;
+
+    const totalScore = flags.reduce((sum, f) => sum + f.score, 0) + bonusScore - conflictPenalty;
 
     return {
       symbol: snapshot.symbol,
@@ -246,6 +251,7 @@ export class MarketScorer {
       flags,
       directionBias,
       bonusScore,
+      conflictPenalty,
       timestamp: Date.now(),
     };
   }
@@ -381,7 +387,7 @@ export class MarketScorer {
     const dirIcon = score.directionBias === 'long' ? '📈' : score.directionBias === 'short' ? '📉' : '➡️';
 
     const lines = [
-      `${icon} <b>${score.symbol}</b> | Score: ${score.totalScore}${score.bonusScore > 0 ? ` (+${score.bonusScore} bonus)` : ''} | ${dirIcon} ${score.directionBias.toUpperCase()}`,
+      `${icon} <b>${score.symbol}</b> | Score: ${score.totalScore}${score.bonusScore > 0 ? ` (+${score.bonusScore} bonus)` : ''}${score.conflictPenalty ? ` (-${score.conflictPenalty} conflict)` : ''} | ${dirIcon} ${score.directionBias.toUpperCase()}`,
     ];
 
     // Separate TA flags and external flags

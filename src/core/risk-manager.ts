@@ -2,7 +2,7 @@ import { Decimal } from 'decimal.js';
 import { config } from '../config/index.js';
 import { createChildLogger } from '../monitoring/logger.js';
 import { saveStrategyState, loadStrategyState } from '../data/storage.js';
-import type { TradeSignal, RiskCheckResult, RiskLimits } from './types.js';
+import type { TradeSignal, RiskCheckResult, RiskLimits, StrategyPositionSummary } from './types.js';
 import type { Strategy } from '../strategies/base.js';
 
 const log = createChildLogger('risk-manager');
@@ -123,6 +123,43 @@ export class RiskManager {
     }
 
     return { approved: true, drawdownPct, level: 'normal' };
+  }
+
+  /**
+   * Check if adding a new position would exceed per-symbol cross-strategy exposure limit.
+   * Blocks if total notional for a symbol exceeds 40% of totalBalance.
+   */
+  checkCrossExposure(
+    summaries: StrategyPositionSummary[],
+    newSymbol: string,
+    newNotional: number,
+    totalBalance: number,
+  ): RiskCheckResult {
+    const maxExposurePct = 40;
+    const maxExposure = totalBalance * (maxExposurePct / 100);
+
+    // Sum existing notional for this symbol across all strategies
+    const existingNotional = summaries
+      .filter(s => s.symbol === newSymbol)
+      .reduce((sum, s) => sum + s.notionalValue, 0);
+
+    const totalNotional = existingNotional + newNotional;
+
+    if (totalNotional > maxExposure) {
+      log.warn({
+        symbol: newSymbol,
+        existingNotional: existingNotional.toFixed(2),
+        newNotional: newNotional.toFixed(2),
+        totalNotional: totalNotional.toFixed(2),
+        maxExposure: maxExposure.toFixed(2),
+      }, 'Cross-exposure limit exceeded');
+      return {
+        approved: false,
+        reason: `Cross-exposure: ${newSymbol} total $${totalNotional.toFixed(0)} exceeds ${maxExposurePct}% of balance ($${maxExposure.toFixed(0)})`,
+      };
+    }
+
+    return { approved: true };
   }
 
   getLimits(): RiskLimits {

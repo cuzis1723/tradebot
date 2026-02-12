@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "test": "vitest",
     "lint": "eslint src/",
-    "check-balances": "tsx scripts/check-balances.ts"
+    "check-balances": "tsx scripts/check-balances.ts",
+    "backtest": "tsx src/backtest/scorer-backtest.ts"
   },
   "engines": {
     "node": ">=22.0.0"

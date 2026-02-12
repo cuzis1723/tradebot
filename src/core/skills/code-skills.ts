@@ -21,8 +21,6 @@ import type {
   RiskAssessment,
 } from './types.js';
 
-/** Default initial capital if not provided. From CLAUDE.md: $1,000 */
-const DEFAULT_INITIAL_CAPITAL = 1000;
 
 // ============================================================
 // Skill 1: assessContext
@@ -225,7 +223,7 @@ export function assessRisk(
   initialCapital?: number,
 ): SkillResult<RiskAssessment> {
   const now = Date.now();
-  const initCap = initialCapital ?? DEFAULT_INITIAL_CAPITAL;
+  const initCap = initialCapital ?? balance;
 
   // Discretionary allocation: 55%
   const discAllocation = balance * 0.55;

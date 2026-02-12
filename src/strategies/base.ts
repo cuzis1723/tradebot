@@ -1,6 +1,6 @@
 import { Decimal } from 'decimal.js';
 import { EventEmitter } from 'events';
-import type { StrategyTier, StrategyStatus, TradeSignal, FilledOrder, StrategyPerformance, TradingMode, MarketState } from '../core/types.js';
+import type { StrategyTier, StrategyStatus, TradeSignal, FilledOrder, StrategyPerformance, TradingMode, MarketState, StrategyPositionSummary } from '../core/types.js';
 import { createChildLogger } from '../monitoring/logger.js';
 
 export abstract class Strategy extends EventEmitter {
@@ -170,6 +170,26 @@ export abstract class Strategy extends EventEmitter {
   /** Access current market state from Brain */
   protected get marketState(): Readonly<MarketState> | null {
     return this._marketState;
+  }
+
+  // === Cross-Exposure Check (v3) ===
+
+  private crossExposureChecker: ((symbol: string, notional: number) => boolean) | null = null;
+
+  /** Called by Engine to register the cross-exposure check callback */
+  setCrossExposureChecker(fn: (symbol: string, notional: number) => boolean): void {
+    this.crossExposureChecker = fn;
+  }
+
+  /** Check if a new position is allowed by the cross-exposure limit */
+  protected canOpenPosition(symbol: string, notional: number): boolean {
+    if (!this.crossExposureChecker) return true;
+    return this.crossExposureChecker(symbol, notional);
+  }
+
+  /** Return summaries of open positions for cross-exposure aggregation. Override in subclasses. */
+  getPositionSummaries(): StrategyPositionSummary[] {
+    return [];
   }
 
   /**

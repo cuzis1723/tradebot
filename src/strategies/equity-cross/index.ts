@@ -8,6 +8,7 @@ import type {
   TradeSignal,
   FilledOrder,
   EquityCrossConfig,
+  StrategyPositionSummary,
 } from '../../core/types.js';
 
 interface EquityCrossPosition {
@@ -19,6 +20,8 @@ interface EquityCrossPosition {
   takeProfit: number;
   equityTrigger: string; // which equity perp triggered the trade
   openedAt: number;
+  slOrderId?: number;
+  tpOrderId?: number;
 }
 
 interface PriceHistory {
@@ -233,6 +236,12 @@ export class EquityCrossStrategy extends Strategy {
 
     if (sz <= 0) return;
 
+    // Cross-exposure check before entry
+    if (!this.canOpenPosition(cryptoSymbol, notional.toNumber())) {
+      this.log.warn({ cryptoSymbol, notional: notional.toFixed(2) }, 'Equity-Cross entry blocked by cross-exposure limit');
+      return;
+    }
+
     try {
       await hl.updateLeverage(cryptoSymbol, this.config.leverage, 'cross');
 
@@ -252,6 +261,30 @@ export class EquityCrossStrategy extends Strategy {
 
       const entryPrice = result.avgPrice ? parseFloat(result.avgPrice) : currentPrice;
 
+      // Place on-chain trigger orders for SL and TP
+      let slOrderId: number | undefined;
+      let tpOrderId: number | undefined;
+
+      const slResult = await hl.placeTriggerOrder({
+        coin: cryptoSymbol,
+        isBuy: side !== 'buy',
+        size: sz.toString(),
+        triggerPx: stopLoss.toString(),
+        tpsl: 'sl',
+        reduceOnly: true,
+      });
+      if (slResult.orderId) slOrderId = slResult.orderId;
+
+      const tpResult = await hl.placeTriggerOrder({
+        coin: cryptoSymbol,
+        isBuy: side !== 'buy',
+        size: sz.toString(),
+        triggerPx: takeProfit.toString(),
+        tpsl: 'tp',
+        reduceOnly: true,
+      });
+      if (tpResult.orderId) tpOrderId = tpResult.orderId;
+
       this.positions.push({
         symbol: cryptoSymbol,
         side,
@@ -261,6 +294,8 @@ export class EquityCrossStrategy extends Strategy {
         takeProfit,
         equityTrigger,
         openedAt: Date.now(),
+        slOrderId,
+        tpOrderId,
       });
 
       logTrade(this.id, cryptoSymbol, side, entryPrice, sz, 0, 0, result.orderId?.toString());
@@ -316,6 +351,13 @@ export class EquityCrossStrategy extends Strategy {
   private async closePosition(position: EquityCrossPosition, reason: string): Promise<void> {
     const hl = getHyperliquidClient();
     const closeSide = position.side === 'buy' ? 'sell' : 'buy';
+
+    // Cancel remaining trigger orders before closing
+    try {
+      await hl.cancelTriggerOrders(position.symbol);
+    } catch (err) {
+      this.log.warn({ err, symbol: position.symbol }, 'Failed to cancel trigger orders on close');
+    }
 
     try {
       const currentPrice = this.lastCryptoPrices.get(position.symbol) ?? 0;
@@ -409,5 +451,16 @@ export class EquityCrossStrategy extends Strategy {
 
   getPositions(): EquityCrossPosition[] {
     return [...this.positions];
+  }
+
+  // === Cross-Exposure (v3) ===
+
+  override getPositionSummaries(): StrategyPositionSummary[] {
+    return this.positions.map(p => ({
+      strategyId: this.id,
+      symbol: p.symbol,
+      side: p.side,
+      notionalValue: Math.abs(p.entryPrice * p.size),
+    }));
   }
 }

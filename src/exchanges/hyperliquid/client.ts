@@ -8,6 +8,7 @@ import type {
   HLSpotClearinghouseState, HLSpotMeta, HLSpotAssetCtx,
   HLUserFill, HLUserFunding, HLLedgerUpdate, HLOrderStatus,
   HLTwapParams, HLTwapStatus, HLPredictedFunding, HLFundingHistoryEntry,
+  HLTriggerOrderParams,
 } from './types.js';
 import type { FundingRate } from '../../core/types.js';
 
@@ -266,6 +267,56 @@ export class HyperliquidClient {
       log.error({ err }, 'Cancel all orders failed');
       return false;
     }
+  }
+
+  // ============================================================
+  // Orders — Trigger (TP/SL)
+  // ============================================================
+
+  async placeTriggerOrder(params: HLTriggerOrderParams): Promise<{ orderId: number | null; error: string | null }> {
+    try {
+      const response = await this.sdk.exchange.placeOrder({
+        coin: params.coin,
+        is_buy: params.isBuy,
+        sz: parseFloat(params.size),
+        limit_px: 0,
+        order_type: {
+          trigger: {
+            triggerPx: params.triggerPx,
+            isMarket: true,
+            tpsl: params.tpsl,
+          },
+        } as unknown as { limit: { tif: 'Gtc' } },
+        reduce_only: params.reduceOnly,
+        grouping: 'positionTpsl' as unknown as 'na',
+      } as unknown as Parameters<typeof this.sdk.exchange.placeOrder>[0]);
+
+      const resp = response as { status: string; response?: { type: string; data?: { statuses: Array<Record<string, unknown>> } } };
+
+      if (resp.status === 'ok' && resp.response?.data?.statuses) {
+        const status = resp.response.data.statuses[0];
+        if (status && 'resting' in status) {
+          const resting = status.resting as { oid: number };
+          log.info({ orderId: resting.oid, ...params }, 'Trigger order placed');
+          return { orderId: resting.oid, error: null };
+        }
+        if (status && 'error' in status) {
+          const errMsg = status.error as string;
+          log.warn({ error: errMsg, ...params }, 'Trigger order rejected');
+          return { orderId: null, error: errMsg };
+        }
+      }
+
+      log.warn({ response }, 'Unexpected trigger order response');
+      return { orderId: null, error: 'Unexpected response' };
+    } catch (err) {
+      log.error({ err, ...params }, 'Trigger order placement failed');
+      return { orderId: null, error: String(err) };
+    }
+  }
+
+  async cancelTriggerOrders(symbol: string): Promise<boolean> {
+    return this.cancelAllOrders(symbol);
   }
 
   // ============================================================

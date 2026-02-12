@@ -1,5 +1,5 @@
 import { Decimal } from 'decimal.js';
-import { RSI, EMA, ATR } from 'technicalindicators';
+import { RSI, EMA, ATR, ADX } from 'technicalindicators';
 import { Strategy } from '../base.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
 import { logTrade } from '../../data/storage.js';
@@ -9,6 +9,7 @@ import type {
   TradeSignal,
   FilledOrder,
   MomentumConfig,
+  StrategyPositionSummary,
 } from '../../core/types.js';
 
 interface MomentumPosition {
@@ -19,6 +20,8 @@ interface MomentumPosition {
   stopLoss: number;
   takeProfit: number;
   openedAt: number;
+  slOrderId?: number;
+  tpOrderId?: number;
 }
 
 interface SymbolState {
@@ -131,11 +134,23 @@ export class MomentumStrategy extends Strategy {
     if (parsed.length < 30) return null;
 
     const closes = parsed.map(c => c.close);
+    const highs = parsed.map(c => c.high);
+    const lows = parsed.map(c => c.low);
 
     // Calculate indicators
     const fastEmaValues = EMA.calculate({ values: closes, period: this.config.fastEma });
     const slowEmaValues = EMA.calculate({ values: closes, period: this.config.slowEma });
     const rsiValues = RSI.calculate({ values: closes, period: this.config.rsiPeriod });
+
+    // ADX filter: skip signal in ranging market (ADX < 20)
+    const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: 14 });
+    if (adxValues.length > 0) {
+      const latestAdx = adxValues[adxValues.length - 1].adx;
+      if (latestAdx < 20) {
+        this.log.debug({ symbol, adx: latestAdx.toFixed(1) }, 'Signal skipped: ADX < 20 (ranging market)');
+        return null;
+      }
+    }
 
     if (fastEmaValues.length < 2 || slowEmaValues.length < 2 || rsiValues.length < 1) return null;
 
@@ -242,6 +257,12 @@ export class MomentumStrategy extends Strategy {
 
     if (sz <= 0) return;
 
+    // Cross-exposure check before entry
+    if (!this.canOpenPosition(symbol, notional.toNumber())) {
+      this.log.warn({ symbol, notional: notional.toFixed(2) }, 'Momentum entry blocked by cross-exposure limit');
+      return;
+    }
+
     try {
       await hl.updateLeverage(symbol, effectiveLeverage, 'cross');
 
@@ -261,6 +282,30 @@ export class MomentumStrategy extends Strategy {
 
       const entryPrice = result.avgPrice ? parseFloat(result.avgPrice) : currentPrice;
 
+      // Place on-chain trigger orders for SL and TP
+      let slOrderId: number | undefined;
+      let tpOrderId: number | undefined;
+
+      const slResult = await hl.placeTriggerOrder({
+        coin: symbol,
+        isBuy: side !== 'buy', // opposite side to close
+        size: sz.toString(),
+        triggerPx: stopLoss.toString(),
+        tpsl: 'sl',
+        reduceOnly: true,
+      });
+      if (slResult.orderId) slOrderId = slResult.orderId;
+
+      const tpResult = await hl.placeTriggerOrder({
+        coin: symbol,
+        isBuy: side !== 'buy',
+        size: sz.toString(),
+        triggerPx: takeProfit.toString(),
+        tpsl: 'tp',
+        reduceOnly: true,
+      });
+      if (tpResult.orderId) tpOrderId = tpResult.orderId;
+
       this.positions.push({
         symbol,
         side,
@@ -269,6 +314,8 @@ export class MomentumStrategy extends Strategy {
         stopLoss,
         takeProfit,
         openedAt: Date.now(),
+        slOrderId,
+        tpOrderId,
       });
 
       // Update state
@@ -333,6 +380,13 @@ export class MomentumStrategy extends Strategy {
     const hl = getHyperliquidClient();
     const closeSide = position.side === 'buy' ? 'sell' : 'buy';
 
+    // Cancel remaining trigger orders before closing
+    try {
+      await hl.cancelTriggerOrders(position.symbol);
+    } catch (err) {
+      this.log.warn({ err, symbol: position.symbol }, 'Failed to cancel trigger orders on close');
+    }
+
     try {
       const mids = await hl.getAllMidPrices();
       const coin = position.symbol.replace('-PERP', '');
@@ -386,5 +440,16 @@ export class MomentumStrategy extends Strategy {
     for (const position of [...this.positions]) {
       await this.closePosition(position, 'strategy_stop');
     }
+  }
+
+  // === Cross-Exposure (v3) ===
+
+  override getPositionSummaries(): StrategyPositionSummary[] {
+    return this.positions.map(p => ({
+      strategyId: this.id,
+      symbol: p.symbol,
+      side: p.side,
+      notionalValue: Math.abs(p.entryPrice * p.size),
+    }));
   }
 }

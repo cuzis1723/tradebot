@@ -7,7 +7,7 @@ import { getHyperliquidClient, type HyperliquidClient } from '../exchanges/hyper
 import { initTelegram, sendAlert, sendTradeAlert, stopTelegram } from '../monitoring/telegram.js';
 import { getDb, closeDb } from '../data/storage.js';
 import type { Strategy } from '../strategies/base.js';
-import type { EngineStatus, BrainConfig, TradeProposal, MarketSnapshot } from './types.js';
+import type { EngineStatus, BrainConfig, TradeProposal, MarketSnapshot, StrategyPositionSummary } from './types.js';
 
 const log = createChildLogger('engine');
 
@@ -95,6 +95,15 @@ export class TradingEngine {
       } catch (err) {
         log.error({ err, id }, 'Failed to start strategy');
       }
+    }
+
+    // Wire cross-exposure checker on each strategy
+    for (const strategy of this.strategies.values()) {
+      strategy.setCrossExposureChecker((symbol: string, notional: number) => {
+        const summaries = this.getAllPositionSummaries();
+        const result = this.riskManager.checkCrossExposure(summaries, symbol, notional, balance.toNumber());
+        return result.approved;
+      });
     }
 
     // Wire Brain events
@@ -243,6 +252,14 @@ export class TradingEngine {
     this.running = false;
 
     log.info('Trading engine stopped');
+  }
+
+  private getAllPositionSummaries(): StrategyPositionSummary[] {
+    const summaries: StrategyPositionSummary[] = [];
+    for (const strategy of this.strategies.values()) {
+      summaries.push(...strategy.getPositionSummaries());
+    }
+    return summaries;
   }
 
   getStatus(): EngineStatus {

@@ -252,7 +252,17 @@ export interface TriggerScore {
   flags: TriggerFlag[];
   directionBias: 'long' | 'short' | 'neutral';
   bonusScore: number;
+  conflictPenalty?: number;
   timestamp: number;
+}
+
+// === Cross-Exposure Types (v3) ===
+
+export interface StrategyPositionSummary {
+  strategyId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  notionalValue: number;
 }
 
 export interface CooldownState {

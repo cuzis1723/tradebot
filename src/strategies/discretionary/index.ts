@@ -11,6 +11,7 @@ import type {
   TradeProposal,
   MarketSnapshot,
   ActiveDiscretionaryPosition,
+  StrategyPositionSummary,
 } from '../../core/types.js';
 
 /**
@@ -303,6 +304,17 @@ export class DiscretionaryStrategy extends Strategy {
       );
     }
     return lines.join('\n');
+  }
+
+  // === Cross-Exposure (v3) ===
+
+  override getPositionSummaries(): StrategyPositionSummary[] {
+    return this.positions.map(p => ({
+      strategyId: this.id,
+      symbol: p.symbol,
+      side: p.side,
+      notionalValue: Math.abs(p.entryPrice * p.size),
+    }));
   }
 
   getPendingProposal(shortId: string): TradeProposal | undefined {
