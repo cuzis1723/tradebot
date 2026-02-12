@@ -79,3 +79,154 @@ export interface HLAssetInfo {
   volume24h: number;
   maxLeverage: number;
 }
+
+// === Spot Types ===
+
+export interface HLSpotBalance {
+  coin: string;
+  token: number;
+  total: string;
+  hold: string;
+  entryNtl: string;
+}
+
+export interface HLSpotClearinghouseState {
+  balances: HLSpotBalance[];
+}
+
+export interface HLSpotMeta {
+  universe: Array<{
+    tokens: number[];
+    name: string;
+    index: number;
+    isCanonical: boolean;
+  }>;
+  tokens: Array<{
+    name: string;
+    szDecimals: number;
+    weiDecimals: number;
+    index: number;
+    tokenId: string;
+    isCanonical: boolean;
+  }>;
+}
+
+export interface HLSpotAssetCtx {
+  dayNtlVlm: string;
+  markPx: string;
+  midPx: string;
+  prevDayPx: string;
+  circulatingSupply: string;
+}
+
+// === User Fill / Trade History Types ===
+
+export interface HLUserFill {
+  coin: string;
+  px: string;
+  sz: string;
+  side: string;
+  time: number;
+  startPosition: string;
+  dir: string;
+  closedPnl: string;
+  hash: string;
+  oid: number;
+  crossed: boolean;
+  fee: string;
+  tid: number;
+  feeToken: string;
+}
+
+// === User Funding Types ===
+
+export interface HLUserFunding {
+  time: number;
+  coin: string;
+  usdc: string;
+  szi: string;
+  fundingRate: string;
+}
+
+// === Ledger / Transfer Types ===
+
+export interface HLLedgerUpdate {
+  time: number;
+  hash: string;
+  delta: {
+    type: string;
+    usdc: string;
+    fee?: string;
+    nonce?: number;
+  };
+}
+
+// === Order Status Types ===
+
+export interface HLOrderStatus {
+  order: {
+    coin: string;
+    side: string;
+    limitPx: string;
+    sz: string;
+    oid: number;
+    timestamp: number;
+    origSz: string;
+    cloid?: string;
+  };
+  status: string;
+  statusTimestamp: number;
+}
+
+// === Modify Order Types ===
+
+export interface HLModifyOrderParams {
+  oid: number;
+  coin: string;
+  isBuy: boolean;
+  size: string;
+  price: string;
+  orderType?: 'limit' | 'market';
+  tif?: 'Gtc' | 'Ioc' | 'Alo';
+  reduceOnly?: boolean;
+}
+
+// === TWAP Types ===
+
+export interface HLTwapParams {
+  coin: string;
+  isBuy: boolean;
+  sz: number;
+  reduceOnly: boolean;
+  durationMs: number;
+  randomize: boolean;
+}
+
+export interface HLTwapStatus {
+  id: number;
+  coin: string;
+  isBuy: boolean;
+  sz: string;
+  filledSz: string;
+  avgPx: string;
+  state: string;
+  startTime: number;
+  endTime: number;
+}
+
+// === Predicted Funding ===
+
+export interface HLPredictedFunding {
+  coin: string;
+  predictedFundingRate: string;
+  currentFundingRate: string;
+}
+
+// === Funding History ===
+
+export interface HLFundingHistoryEntry {
+  coin: string;
+  fundingRate: string;
+  premium: string;
+  time: number;
+}
