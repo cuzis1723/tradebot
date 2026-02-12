@@ -16,6 +16,7 @@ const CRYPTO_KEYWORDS = [
 ];
 
 // Map prediction market topics to trading symbols
+const BROAD_CRYPTO = ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'];
 const SYMBOL_MAPPING: Record<string, string[]> = {
   bitcoin: ['BTC-PERP'],
   btc: ['BTC-PERP'],
@@ -23,15 +24,32 @@ const SYMBOL_MAPPING: Record<string, string[]> = {
   eth: ['ETH-PERP'],
   solana: ['SOL-PERP'],
   sol: ['SOL-PERP'],
-  // Broad crypto/macro → affects all
-  crypto: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  defi: ['ETH-PERP', 'SOL-PERP'],
+  dogecoin: ['DOGE-PERP'],
+  doge: ['DOGE-PERP'],
+  chainlink: ['LINK-PERP'],
+  link: ['LINK-PERP'],
+  arbitrum: ['ARB-PERP'],
+  arb: ['ARB-PERP'],
+  optimism: ['OP-PERP'],
+  uniswap: ['UNI-PERP'],
+  aave: ['AAVE-PERP'],
+  pepe: ['PEPE-PERP'],
+  sui: ['SUI-PERP'],
+  // AI/compute tokens
+  ai: ['RENDER-PERP', 'FET-PERP'],
+  nvidia: ['RENDER-PERP', 'FET-PERP'],
+  // Broad crypto/macro → affects major caps
+  crypto: BROAD_CRYPTO,
+  defi: ['ETH-PERP', 'SOL-PERP', 'AAVE-PERP', 'UNI-PERP'],
   etf: ['BTC-PERP', 'ETH-PERP'],
-  sec: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  regulation: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  fed: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  'interest rate': ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  recession: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+  sec: BROAD_CRYPTO,
+  regulation: BROAD_CRYPTO,
+  fed: BROAD_CRYPTO,
+  'interest rate': BROAD_CRYPTO,
+  recession: BROAD_CRYPTO,
+  stablecoin: BROAD_CRYPTO,
+  'layer 2': ['ARB-PERP', 'OP-PERP', 'STRK-PERP'],
+  l2: ['ARB-PERP', 'OP-PERP', 'STRK-PERP'],
 };
 
 interface GammaEvent {

@@ -5,11 +5,40 @@ const log = createChildLogger('coingecko');
 
 const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
 
-// Map CoinGecko coin IDs to our perp symbols
+// Map CoinGecko coin IDs to perp symbols
+// Covers all major coins that have Hyperliquid perps
 const COIN_TO_SYMBOL: Record<string, string> = {
   bitcoin: 'BTC-PERP',
   ethereum: 'ETH-PERP',
   solana: 'SOL-PERP',
+  dogecoin: 'DOGE-PERP',
+  chainlink: 'LINK-PERP',
+  avalanche: 'AVAX-PERP',
+  'matic-network': 'MATIC-PERP',
+  polkadot: 'DOT-PERP',
+  uniswap: 'UNI-PERP',
+  'internet-computer': 'ICP-PERP',
+  arbitrum: 'ARB-PERP',
+  optimism: 'OP-PERP',
+  near: 'NEAR-PERP',
+  aptos: 'APT-PERP',
+  sui: 'SUI-PERP',
+  injective: 'INJ-PERP',
+  celestia: 'TIA-PERP',
+  sei: 'SEI-PERP',
+  'render-token': 'RENDER-PERP',
+  'fetch-ai': 'FET-PERP',
+  pepe: 'PEPE-PERP',
+  'bonk1': 'BONK-PERP',
+  'dogwifcoin': 'WIF-PERP',
+  worldcoin: 'WLD-PERP',
+  'jupiter-exchange-solana': 'JUP-PERP',
+  aave: 'AAVE-PERP',
+  maker: 'MKR-PERP',
+  pendle: 'PENDLE-PERP',
+  ethena: 'ENA-PERP',
+  starknet: 'STRK-PERP',
+  'jito-governance-token': 'JTO-PERP',
 };
 
 interface CoinGeckoTrending {

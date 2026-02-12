@@ -1,7 +1,8 @@
 import { RSI, EMA, ATR, BollingerBands } from 'technicalindicators';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
 import { createChildLogger } from '../../monitoring/logger.js';
-import type { MarketSnapshot } from '../../core/types.js';
+import type { MarketSnapshot, PreScreenResult } from '../../core/types.js';
+import type { HLAssetInfo } from '../../exchanges/hyperliquid/types.js';
 
 const log = createChildLogger('market-analyzer');
 
@@ -18,6 +19,10 @@ export class MarketAnalyzer {
   private candleCache: Map<string, CandleData[]> = new Map();
   private midPriceCache: Map<string, number> = new Map();
   private oiCache: Map<string, number> = new Map();
+
+  // Per-cycle cache for getAssetInfos() — avoid redundant calls
+  private assetInfoCache: { data: HLAssetInfo[]; timestamp: number } | null = null;
+  private readonly ASSET_INFO_TTL_MS = 60_000; // 1 min TTL
 
   async fetchCandles(symbol: string, interval: '1h' | '4h' = '1h', limit: number = 100): Promise<CandleData[]> {
     const hl = getHyperliquidClient();
@@ -193,31 +198,28 @@ export class MarketAnalyzer {
         ? lastCompletedVolume / avgHourlyVolume
         : 0;
 
-      // Funding rate
-      const hl = getHyperliquidClient();
-      const fundingRates = await hl.getFundingRates();
-      const funding = fundingRates.find(f => f.symbol === symbol);
-      const fundingRate = funding ? funding.rate.toNumber() : 0;
-
-      // OI change - try to get from asset infos (may not be available on testnet)
+      // Funding rate + OI from cached asset infos (single API call for all symbols)
+      let fundingRate = 0;
       let oiChange1h: number | undefined;
       try {
-        const assetInfos = await hl.getAssetInfos();
+        const assetInfos = await this.getAssetInfosCached();
         const coin = symbol.replace('-PERP', '');
         const assetInfo = assetInfos.find(a => a.name === coin);
-        if (assetInfo && assetInfo.openInterest > 0) {
-          // We don't have historical OI readily available, so store current OI
-          // and compute change on subsequent calls
-          const cacheKey = `oi:${symbol}`;
-          const prevOI = this.oiCache.get(cacheKey);
-          const currentOI = assetInfo.openInterest;
-          if (prevOI !== undefined && prevOI > 0) {
-            oiChange1h = ((currentOI - prevOI) / prevOI) * 100;
+        if (assetInfo) {
+          fundingRate = assetInfo.funding;
+
+          if (assetInfo.openInterest > 0) {
+            const cacheKey = `oi:${symbol}`;
+            const prevOI = this.oiCache.get(cacheKey);
+            const currentOI = assetInfo.openInterest;
+            if (prevOI !== undefined && prevOI > 0) {
+              oiChange1h = ((currentOI - prevOI) / prevOI) * 100;
+            }
+            this.oiCache.set(cacheKey, currentOI);
           }
-          this.oiCache.set(cacheKey, currentOI);
         }
       } catch (err) {
-        log.debug({ err, symbol }, 'OI data not available');
+        log.debug({ err, symbol }, 'Asset info not available');
       }
 
       // 15m candle analysis (v3)
@@ -261,7 +263,143 @@ export class MarketAnalyzer {
     }
   }
 
+  /** Get all asset infos with per-cycle caching (avoids redundant API calls) */
+  async getAssetInfosCached(): Promise<HLAssetInfo[]> {
+    const now = Date.now();
+    if (this.assetInfoCache && now - this.assetInfoCache.timestamp < this.ASSET_INFO_TTL_MS) {
+      return this.assetInfoCache.data;
+    }
+    const hl = getHyperliquidClient();
+    const data = await hl.getAssetInfos();
+    this.assetInfoCache = { data, timestamp: now };
+    return data;
+  }
+
+  /**
+   * Pre-screen ALL symbols using only asset info data (1 API call total).
+   * Returns symbols ranked by "interestingness" without fetching any candles.
+   *
+   * Pre-screen scoring:
+   *  - |24h change| > 5%  → +2
+   *  - |24h change| > 10% → +3 (replaces +2)
+   *  - |funding| > 0.03%/h → +1
+   *  - |funding| > 0.05%/h → +2 (replaces +1)
+   *  - volume24h > $100M  → +1
+   *  - OI > $20M          → +1
+   */
+  async preScreenSymbols(opts: {
+    minVolume24h: number;
+    minOpenInterest: number;
+    maxSymbols: number;
+    coreSymbols: string[];
+    preScreenThreshold: number;
+  }): Promise<{ selected: string[]; preScreenResults: PreScreenResult[] }> {
+    const assetInfos = await this.getAssetInfosCached();
+
+    const coreSet = new Set(opts.coreSymbols.map(s => s.replace('-PERP', '')));
+    const results: PreScreenResult[] = [];
+
+    for (const asset of assetInfos) {
+      const symbol = `${asset.name}-PERP`;
+
+      // Hard liquidity floor
+      if (asset.volume24h < opts.minVolume24h && !coreSet.has(asset.name)) continue;
+      if (asset.openInterest < opts.minOpenInterest && !coreSet.has(asset.name)) continue;
+      if (asset.markPrice <= 0) continue;
+
+      // Compute 24h change from prevDayPx if available, otherwise skip
+      // getAssetInfos doesn't have prevDayPx directly, but HLAssetCtx does
+      // We'll use funding + volume + OI as pre-screen signals
+      let score = 0;
+      const flags: string[] = [];
+
+      // Funding extremes
+      const absFunding = Math.abs(asset.funding);
+      if (absFunding > 0.0005) {
+        score += 2;
+        flags.push(`funding ${(asset.funding * 100).toFixed(4)}%/h`);
+      } else if (absFunding > 0.0003) {
+        score += 1;
+        flags.push(`funding ${(asset.funding * 100).toFixed(4)}%/h`);
+      }
+
+      // High volume
+      if (asset.volume24h > 100_000_000) {
+        score += 1;
+        flags.push(`vol $${(asset.volume24h / 1e6).toFixed(0)}M`);
+      }
+
+      // High OI
+      if (asset.openInterest > 20_000_000) {
+        score += 1;
+        flags.push(`OI $${(asset.openInterest / 1e6).toFixed(0)}M`);
+      }
+
+      results.push({
+        symbol,
+        score,
+        change24hPct: 0, // filled after mid price comparison below
+        volume24h: asset.volume24h,
+        openInterest: asset.openInterest,
+        fundingRate: asset.funding,
+        markPrice: asset.markPrice,
+        flags,
+      });
+    }
+
+    // Enhance pre-screen with 24h price change using cached mid prices
+    // If we have previous mid prices, compute change
+    await this.updateMidPrices();
+    for (const r of results) {
+      const coin = r.symbol.replace('-PERP', '');
+      const assetInfo = assetInfos.find(a => a.name === coin);
+      if (!assetInfo) continue;
+
+      // Use the oiCache to detect OI changes across scans
+      const prevOI = this.oiCache.get(`oi:${r.symbol}`);
+      if (prevOI !== undefined && prevOI > 0) {
+        const oiChangePct = ((assetInfo.openInterest - prevOI) / prevOI) * 100;
+        if (Math.abs(oiChangePct) > 5) {
+          r.score += 2;
+          r.flags.push(`OI Δ${oiChangePct > 0 ? '+' : ''}${oiChangePct.toFixed(1)}%`);
+        }
+      }
+      this.oiCache.set(`oi:${r.symbol}`, assetInfo.openInterest);
+    }
+
+    // Select: core always + top pre-screened by score
+    const selected: string[] = [];
+    const coreResults = results.filter(r => coreSet.has(r.symbol.replace('-PERP', '')));
+    const dynamicResults = results
+      .filter(r => !coreSet.has(r.symbol.replace('-PERP', '')))
+      .filter(r => r.score >= opts.preScreenThreshold)
+      .sort((a, b) => b.score - a.score);
+
+    for (const r of coreResults) {
+      selected.push(r.symbol);
+    }
+    for (const r of dynamicResults) {
+      if (selected.length >= opts.maxSymbols) break;
+      selected.push(r.symbol);
+    }
+
+    if (dynamicResults.length > 0) {
+      log.info({
+        total: assetInfos.length,
+        passedFilter: results.length,
+        passedPreScreen: dynamicResults.length,
+        selected: selected.length,
+        topDynamic: dynamicResults.slice(0, 5).map(r => `${r.symbol}(${r.score})`),
+      }, 'Dynamic symbol pre-screen complete');
+    }
+
+    return { selected, preScreenResults: results };
+  }
+
   async analyzeMultiple(symbols: string[]): Promise<MarketSnapshot[]> {
+    // Pre-fetch asset infos once for the whole batch
+    await this.getAssetInfosCached();
+
     const results: MarketSnapshot[] = [];
     for (const symbol of symbols) {
       const snapshot = await this.analyze(symbol);

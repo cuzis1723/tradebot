@@ -95,8 +95,15 @@ export class Brain extends EventEmitter {
 
   /** Start both loops */
   async start(): Promise<void> {
+    const dynMode = this.config.dynamicSymbols?.enabled ? 'dynamic' : 'static';
     log.info({
-      symbols: this.config.symbols,
+      coreSymbols: this.config.symbols,
+      mode: dynMode,
+      ...(this.config.dynamicSymbols?.enabled ? {
+        maxSymbols: this.config.dynamicSymbols.maxSymbols,
+        minVol: `$${(this.config.dynamicSymbols.minVolume24h / 1e6).toFixed(0)}M`,
+        minOI: `$${(this.config.dynamicSymbols.minOpenInterest / 1e6).toFixed(0)}M`,
+      } : {}),
       comprehensive: `${this.config.comprehensiveIntervalMs / 60_000}min`,
       urgent: `${this.config.urgentScanIntervalMs / 60_000}min`,
     }, 'Brain starting...');
@@ -163,6 +170,35 @@ export class Brain extends EventEmitter {
     return this.infoSources;
   }
 
+  // ========== DYNAMIC SYMBOL RESOLUTION ==========
+
+  /**
+   * Resolve which symbols to fully analyze this cycle.
+   * If dynamicSymbols is enabled: pre-screen ALL HL symbols via asset info (1 API call),
+   * then only fully analyze (candles + indicators) symbols that pass the pre-screen.
+   * Core symbols (BTC/ETH/SOL) always get full analysis.
+   */
+  private async resolveSymbols(): Promise<string[]> {
+    const dynCfg = this.config.dynamicSymbols;
+    if (!dynCfg?.enabled) {
+      return this.config.symbols;
+    }
+
+    try {
+      const { selected } = await this.analyzer.preScreenSymbols({
+        minVolume24h: dynCfg.minVolume24h,
+        minOpenInterest: dynCfg.minOpenInterest,
+        maxSymbols: dynCfg.maxSymbols,
+        coreSymbols: this.config.symbols,
+        preScreenThreshold: dynCfg.preScreenThreshold,
+      });
+      return selected;
+    } catch (err) {
+      log.warn({ err }, 'Dynamic symbol discovery failed, falling back to core symbols');
+      return this.config.symbols;
+    }
+  }
+
   // ========== 30-MIN COMPREHENSIVE ANALYSIS ==========
 
   async runComprehensiveAnalysis(): Promise<void> {
@@ -176,9 +212,12 @@ export class Brain extends EventEmitter {
 
     log.info('Running comprehensive analysis...');
 
+    // Step 0: Resolve symbols (dynamic pre-screen or static)
+    const symbols = await this.resolveSymbols();
+
     // Step 1: Collect market data + info sources in parallel
     const [snapshots, infoSignals] = await Promise.all([
-      this.analyzer.analyzeMultiple(this.config.symbols),
+      this.analyzer.analyzeMultiple(symbols),
       this.infoSources.fetchAll().catch(err => {
         log.warn({ err }, 'Info sources fetch failed during comprehensive');
         return this.infoSources.getLastSignals();
@@ -271,9 +310,12 @@ export class Brain extends EventEmitter {
 
     log.debug('Running urgent scan...');
 
+    // Step 0: Resolve symbols (dynamic pre-screen or static)
+    const symbols = await this.resolveSymbols();
+
     // Step 1: Fetch market data + info sources in parallel
     const [snapshots, infoSignals] = await Promise.all([
-      this.analyzer.analyzeMultiple(this.config.symbols),
+      this.analyzer.analyzeMultiple(symbols),
       this.infoSources.fetchAll().catch(err => {
         log.debug({ err }, 'Info sources fetch failed during urgent scan');
         return this.infoSources.getLastSignals();

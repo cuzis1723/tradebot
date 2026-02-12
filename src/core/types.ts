@@ -328,8 +328,32 @@ export interface MarketState {
   urgentTriggerCount: number;     // daily count
 }
 
+export interface DynamicSymbolConfig {
+  enabled: boolean;
+  /** Minimum 24h notional volume (USD) to consider a symbol tradable */
+  minVolume24h: number;
+  /** Minimum open interest (USD) to consider a symbol tradable */
+  minOpenInterest: number;
+  /** Max total symbols to fully analyze per cycle (including core) */
+  maxSymbols: number;
+  /** Min pre-screen score to warrant full candle analysis (0-5 scale) */
+  preScreenThreshold: number;
+}
+
+export interface PreScreenResult {
+  symbol: string;
+  score: number;
+  change24hPct: number;
+  volume24h: number;
+  openInterest: number;
+  fundingRate: number;
+  markPrice: number;
+  flags: string[];
+}
+
 export interface BrainConfig {
-  symbols: string[];
+  symbols: string[];                   // core symbols, always fully analyzed
+  dynamicSymbols?: DynamicSymbolConfig;
   comprehensiveIntervalMs: number;   // 30 min = 1_800_000
   urgentScanIntervalMs: number;      // 5 min = 300_000
   maxDailyComprehensive: number;     // 48 (every 30 min)
