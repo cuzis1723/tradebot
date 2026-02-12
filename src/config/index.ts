@@ -16,8 +16,7 @@ const configSchema = z.object({
   tgBotToken: z.string().optional(),
   tgChatId: z.string().optional(),
 
-  // Capital allocation (v3: Disc 55%, Mom 25%, EquityCross 10%, Cash 10%)
-  initialCapitalUsd: z.coerce.number().positive().default(500),
+  // Capital allocation % (applied to actual account balance)
   discretionaryCapitalPct: z.coerce.number().min(0).max(100).default(55),
   momentumCapitalPct: z.coerce.number().min(0).max(100).default(25),
   equityCrossCapitalPct: z.coerce.number().min(0).max(100).default(10),
@@ -47,7 +46,6 @@ function loadConfig(): Config {
     hlUseTestnet: process.env.HL_USE_TESTNET,
     tgBotToken: process.env.TG_BOT_TOKEN,
     tgChatId: process.env.TG_CHAT_ID,
-    initialCapitalUsd: process.env.INITIAL_CAPITAL_USD,
     discretionaryCapitalPct: process.env.DISCRETIONARY_CAPITAL_PCT,
     momentumCapitalPct: process.env.MOMENTUM_CAPITAL_PCT,
     equityCrossCapitalPct: process.env.EQUITY_CROSS_CAPITAL_PCT,
