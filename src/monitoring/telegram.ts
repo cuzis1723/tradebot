@@ -1,7 +1,6 @@
 import { Bot, type Context } from 'grammy';
 import { config } from '../config/index.js';
 import { createChildLogger } from './logger.js';
-import { getTotalPnl, getRecentTrades } from '../data/storage.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
 import type { Brain } from '../core/brain.js';
@@ -66,34 +65,42 @@ export function initTelegram(engine: EngineRef): Bot | null {
 
   bot.command('pnl', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    const totalPnl = getTotalPnl();
-    const trades = getRecentTrades(5);
-
-    // Fetch unrealized PnL from open positions
-    let unrealizedPnl = 0;
-    let positionCount = 0;
     try {
       const hl = getHyperliquidClient();
-      const state = await hl.getAccountState();
+      const [state, fills] = await Promise.all([
+        hl.getAccountState(),
+        hl.getUserFills(),
+      ]);
+
+      // Unrealized PnL from open positions
       const positions = state.assetPositions.filter(
         ap => parseFloat(ap.position.szi) !== 0,
       );
-      positionCount = positions.length;
-      unrealizedPnl = positions.reduce((sum, ap) => sum + parseFloat(ap.position.unrealizedPnl), 0);
-    } catch {
-      // Silently skip if fetch fails
-    }
+      const unrealizedPnl = positions.reduce((sum, ap) => sum + parseFloat(ap.position.unrealizedPnl), 0);
 
-    let msg = `<b>PnL Summary</b>\n\n`;
-    msg += `Realized PnL: <b>$${totalPnl.toFixed(2)}</b>\n`;
-    msg += `Unrealized PnL: <b>${unrealizedPnl >= 0 ? '+' : ''}$${unrealizedPnl.toFixed(2)}</b> (${positionCount} positions)\n`;
-    msg += `Combined: <b>${(totalPnl + unrealizedPnl) >= 0 ? '+' : ''}$${(totalPnl + unrealizedPnl).toFixed(2)}</b>\n\n`;
-    msg += '<b>Recent Trades:</b>\n';
-    for (const trade of trades as Array<{ strategy_id: string; symbol: string; side: string; pnl: number; price: number }>) {
-      const pnlStr = trade.pnl >= 0 ? `+$${trade.pnl.toFixed(2)}` : `-$${Math.abs(trade.pnl).toFixed(2)}`;
-      msg += `${trade.strategy_id} | ${trade.symbol} ${trade.side} @ $${trade.price} | ${pnlStr}\n`;
+      // Realized PnL from all fills
+      const realizedPnl = fills.reduce((sum, f) => sum + parseFloat(f.closedPnl), 0);
+
+      let msg = `<b>PnL Summary</b>\n\n`;
+      msg += `Realized PnL: <b>${realizedPnl >= 0 ? '+' : ''}$${realizedPnl.toFixed(2)}</b>\n`;
+      msg += `Unrealized PnL: <b>${unrealizedPnl >= 0 ? '+' : ''}$${unrealizedPnl.toFixed(2)}</b> (${positions.length} positions)\n`;
+      msg += `Combined: <b>${(realizedPnl + unrealizedPnl) >= 0 ? '+' : ''}$${(realizedPnl + unrealizedPnl).toFixed(2)}</b>\n\n`;
+
+      // Recent fills from exchange (last 10)
+      const recent = fills.slice(0, 10);
+      msg += `<b>Recent Trades (${fills.length} total):</b>\n`;
+      for (const f of recent) {
+        const pnl = parseFloat(f.closedPnl);
+        const pnlStr = pnl !== 0 ? (pnl >= 0 ? ` +$${pnl.toFixed(2)}` : ` -$${Math.abs(pnl).toFixed(2)}`) : '';
+        const time = new Date(f.time).toISOString().slice(5, 16).replace('T', ' ');
+        msg += `${time} | ${f.coin} ${f.side.toUpperCase()} ${f.sz} @ $${parseFloat(f.px).toFixed(2)}${pnlStr}\n`;
+      }
+
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, 'PnL fetch failed');
+      await ctx.reply('Failed to fetch PnL data.');
     }
-    await ctx.reply(msg, { parse_mode: 'HTML' });
   });
 
   bot.command('pause', async (ctx: Context) => {
