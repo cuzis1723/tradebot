@@ -400,6 +400,301 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await sendLongMessage(ctx, answer);
   });
 
+  bot.command('do', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const command = ctx.message?.text?.replace(/^\/do\s*/, '').trim();
+    if (!command) {
+      await ctx.reply('Usage: /do &lt;command&gt;\n\nExamples:\n/do 잔고 확인해\n/do spot에서 perp으로 400 USDC 옮겨\n/do ETH 롱 0.01개 5배 레버리지\n/do 모든 포지션 정리해\n/do 펀딩레이트 높은 거 보여줘', { parse_mode: 'HTML' });
+      return;
+    }
+    await ctx.reply('Executing...');
+    try {
+      const advisor = brainRef.getAdvisor();
+      const state = brainRef.getState();
+      const infoSources = brainRef.getInfoSources();
+      const infoContext = infoSources.buildLLMContext();
+      const result = await advisor.executeWithSkills(command, {
+        snapshots: state.latestSnapshots,
+        additionalInfo: infoContext !== 'No external data sources available.' ? infoContext : undefined,
+      });
+      await sendLongMessage(ctx, result);
+    } catch (err) {
+      log.error({ err }, '/do command failed');
+      await ctx.reply(`Execution failed: ${String(err)}`);
+    }
+  });
+
+  // === Account Management Commands ===
+
+  bot.command('spotbalance', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hl = getHyperliquidClient();
+      const spotState = await hl.getSpotBalances();
+
+      let msg = '<b>Spot Balances</b>\n\n';
+      const nonZero = spotState.balances.filter(b => parseFloat(b.total) > 0);
+      if (nonZero.length === 0) {
+        msg += 'No spot balances.';
+      } else {
+        for (const b of nonZero) {
+          msg += `${b.coin}: <b>${parseFloat(b.total).toFixed(4)}</b>`;
+          if (parseFloat(b.hold) > 0) msg += ` (hold: ${parseFloat(b.hold).toFixed(4)})`;
+          msg += '\n';
+        }
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    } catch (err) {
+      log.error({ err }, 'Spot balance fetch failed');
+      await ctx.reply('Failed to fetch spot balances.');
+    }
+  });
+
+  bot.command('transfer', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    const parts = ctx.message?.text?.split(' ') ?? [];
+    const amount = parseFloat(parts[1]);
+    const direction = parts[2]?.toLowerCase();
+
+    if (!amount || !direction || !['s2p', 'p2s'].includes(direction)) {
+      await ctx.reply('Usage: /transfer &lt;amount&gt; &lt;s2p|p2s&gt;\n\ns2p = Spot→Perp\np2s = Perp→Spot', { parse_mode: 'HTML' });
+      return;
+    }
+
+    try {
+      const hl = getHyperliquidClient();
+      const toPerp = direction === 's2p';
+      const success = toPerp
+        ? await hl.transferSpotToPerp(amount)
+        : await hl.transferPerpToSpot(amount);
+
+      if (success) {
+        const dir = toPerp ? 'Spot → Perp' : 'Perp → Spot';
+        await ctx.reply(`Transfer $${amount} ${dir} completed.`);
+      } else {
+        await ctx.reply('Transfer failed. Check logs.');
+      }
+    } catch (err) {
+      log.error({ err }, 'Transfer command failed');
+      await ctx.reply('Transfer failed.');
+    }
+  });
+
+  bot.command('withdraw', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    const parts = ctx.message?.text?.split(' ') ?? [];
+    const amount = parseFloat(parts[1]);
+    const destination = parts[2];
+
+    if (!amount || !destination) {
+      await ctx.reply('Usage: /withdraw &lt;amount&gt; &lt;address&gt;', { parse_mode: 'HTML' });
+      return;
+    }
+
+    try {
+      const hl = getHyperliquidClient();
+      const success = await hl.initiateWithdrawal(destination, amount);
+      if (success) {
+        await ctx.reply(`Withdrawal of $${amount} to ${destination.slice(0, 10)}... initiated.`);
+      } else {
+        await ctx.reply('Withdrawal failed. Check logs.');
+      }
+    } catch (err) {
+      log.error({ err }, 'Withdraw command failed');
+      await ctx.reply('Withdrawal failed.');
+    }
+  });
+
+  bot.command('fills', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const count = parseInt(ctx.message?.text?.split(' ')[1] ?? '10');
+      const hl = getHyperliquidClient();
+      const fills = await hl.getUserFills();
+      const recent = fills.slice(0, Math.min(count, 20));
+
+      if (recent.length === 0) {
+        await ctx.reply('No recent fills.');
+        return;
+      }
+
+      let msg = `<b>Recent Fills (${recent.length})</b>\n\n`;
+      for (const f of recent) {
+        const pnl = parseFloat(f.closedPnl);
+        const pnlStr = pnl !== 0 ? (pnl >= 0 ? ` | PnL: +$${pnl.toFixed(2)}` : ` | PnL: -$${Math.abs(pnl).toFixed(2)}`) : '';
+        const time = new Date(f.time).toISOString().slice(5, 16).replace('T', ' ');
+        msg += `${time} | ${f.coin} ${f.side.toUpperCase()} ${f.sz} @ $${parseFloat(f.px).toFixed(2)} | fee: $${parseFloat(f.fee).toFixed(4)}${pnlStr}\n`;
+      }
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, 'Fills command failed');
+      await ctx.reply('Failed to fetch fills.');
+    }
+  });
+
+  bot.command('fundingpaid', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hours = parseInt(ctx.message?.text?.split(' ')[1] ?? '24');
+      const hl = getHyperliquidClient();
+      const startTime = Date.now() - hours * 60 * 60 * 1000;
+      const funding = await hl.getUserFunding(startTime);
+
+      if (funding.length === 0) {
+        await ctx.reply(`No funding payments in the last ${hours}h.`);
+        return;
+      }
+
+      let totalUsdc = 0;
+      let msg = `<b>Funding Payments (${hours}h)</b>\n\n`;
+      for (const f of funding.slice(0, 30)) {
+        const usdc = parseFloat(f.usdc);
+        totalUsdc += usdc;
+        const time = new Date(f.time).toISOString().slice(5, 16).replace('T', ' ');
+        const sign = usdc >= 0 ? '+' : '';
+        msg += `${time} | ${f.coin} | ${sign}$${usdc.toFixed(4)} | rate: ${(parseFloat(f.fundingRate) * 100).toFixed(4)}%\n`;
+      }
+      const totalSign = totalUsdc >= 0 ? '+' : '';
+      msg += `\n<b>Total: ${totalSign}$${totalUsdc.toFixed(4)}</b>`;
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, 'Funding paid command failed');
+      await ctx.reply('Failed to fetch funding payments.');
+    }
+  });
+
+  bot.command('orders', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hl = getHyperliquidClient();
+      const orders = await hl.getOpenOrders() as Array<{ coin: string; side: string; sz: string; limitPx: string; oid: number; timestamp: number }>;
+
+      if (orders.length === 0) {
+        await ctx.reply('No open orders.');
+        return;
+      }
+
+      let msg = `<b>Open Orders (${orders.length})</b>\n\n`;
+      for (const o of orders) {
+        msg += `#${o.oid} | ${o.coin} ${o.side.toUpperCase()} ${o.sz} @ $${parseFloat(o.limitPx).toFixed(2)}\n`;
+      }
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    } catch (err) {
+      log.error({ err }, 'Orders command failed');
+      await ctx.reply('Failed to fetch open orders.');
+    }
+  });
+
+  bot.command('cancelall', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    const symbol = ctx.message?.text?.split(' ')[1];
+    try {
+      const hl = getHyperliquidClient();
+      const success = await hl.cancelAllOrders(symbol);
+      if (success) {
+        await ctx.reply(`All orders cancelled${symbol ? ` for ${symbol}` : ''}.`);
+      } else {
+        await ctx.reply('Cancel all orders failed.');
+      }
+    } catch (err) {
+      log.error({ err }, 'Cancel all command failed');
+      await ctx.reply('Failed to cancel orders.');
+    }
+  });
+
+  bot.command('closeall', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hl = getHyperliquidClient();
+      const success = await hl.closeAllPositions(0.05);
+      if (success) {
+        await ctx.reply('All positions closed.');
+      } else {
+        await ctx.reply('Close all positions failed.');
+      }
+    } catch (err) {
+      log.error({ err }, 'Close all command failed');
+      await ctx.reply('Failed to close positions.');
+    }
+  });
+
+  bot.command('rates', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const symbol = ctx.message?.text?.split(' ')[1]?.toUpperCase();
+      const hl = getHyperliquidClient();
+      const assets = await hl.getAssetInfos();
+
+      let filtered = assets.filter(a => a.funding !== 0);
+      if (symbol) {
+        filtered = filtered.filter(a => a.name.includes(symbol));
+      }
+
+      // Sort by absolute funding rate
+      filtered.sort((a, b) => Math.abs(b.funding) - Math.abs(a.funding));
+      const top = filtered.slice(0, 20);
+
+      if (top.length === 0) {
+        await ctx.reply('No funding rates to show.');
+        return;
+      }
+
+      let msg = '<b>Funding Rates (hourly)</b>\n\n';
+      for (const a of top) {
+        const rate = (a.funding * 100).toFixed(4);
+        const annual = (a.funding * 100 * 24 * 365).toFixed(1);
+        msg += `${a.name}: <b>${rate}%</b>/h (${annual}%/yr) | OI: $${(a.openInterest / 1e6).toFixed(2)}M\n`;
+      }
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, 'Rates command failed');
+      await ctx.reply('Failed to fetch funding rates.');
+    }
+  });
+
+  bot.command('fees', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const hl = getHyperliquidClient();
+      const fees = await hl.getUserFees();
+      await ctx.reply(`<b>Fee Schedule</b>\n\n<pre>${JSON.stringify(fees, null, 2)}</pre>`, { parse_mode: 'HTML' });
+    } catch (err) {
+      log.error({ err }, 'Fees command failed');
+      await ctx.reply('Failed to fetch fee info.');
+    }
+  });
+
+  bot.command('ledger', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    try {
+      const days = parseInt(ctx.message?.text?.split(' ')[1] ?? '7');
+      const hl = getHyperliquidClient();
+      const startTime = Date.now() - days * 24 * 60 * 60 * 1000;
+      const entries = await hl.getUserLedger(startTime);
+
+      if (entries.length === 0) {
+        await ctx.reply(`No ledger entries in the last ${days} days.`);
+        return;
+      }
+
+      let msg = `<b>Ledger (${days}d)</b>\n\n`;
+      for (const e of entries.slice(0, 20)) {
+        const time = new Date(e.time).toISOString().slice(5, 16).replace('T', ' ');
+        const usdc = parseFloat(e.delta.usdc);
+        const sign = usdc >= 0 ? '+' : '';
+        msg += `${time} | ${e.delta.type} | ${sign}$${usdc.toFixed(4)}\n`;
+      }
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, 'Ledger command failed');
+      await ctx.reply('Failed to fetch ledger.');
+    }
+  });
+
   // === Help ===
 
   bot.command('help', async (ctx: Context) => {
@@ -420,7 +715,19 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/cooldown - LLM cooldown status\n'
       + '/info - External intelligence (Polymarket, DeFi TVL, Trending)\n'
       + '/info refresh - Force re-fetch all sources\n'
-      + '/balance - Account balance &amp; positions\n'
+      + '\n<b>Account &amp; Wallet:</b>\n'
+      + '/balance - Perp account balance &amp; positions\n'
+      + '/spotbalance - Spot wallet balances\n'
+      + '/transfer &lt;amt&gt; &lt;s2p|p2s&gt; - Spot↔Perp transfer\n'
+      + '/withdraw &lt;amt&gt; &lt;addr&gt; - Bridge withdrawal\n'
+      + '/orders - Open orders\n'
+      + '/cancelall [symbol] - Cancel all orders\n'
+      + '/closeall - Close all positions\n'
+      + '/fills [count] - Recent trade fills\n'
+      + '/fundingpaid [hours] - Funding payments\n'
+      + '/rates [symbol] - Funding rates\n'
+      + '/fees - Fee schedule\n'
+      + '/ledger [days] - Deposit/withdrawal history\n'
       + '/usage - LLM token usage &amp; cost\n'
       + '\n<b>Discretionary Trading:</b>\n'
       + '/idea &lt;text&gt; - Evaluate trade idea\n'
@@ -430,6 +737,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/positions - Position analysis\n'
       + '/close &lt;symbol&gt; - Close position\n'
       + '/ask &lt;question&gt; - Ask about market\n'
+      + '/do &lt;command&gt; - LLM executes directly (transfer, trade, etc)\n'
       + '\n/help - This message',
       { parse_mode: 'HTML' }
     );
