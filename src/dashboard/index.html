@@ -82,8 +82,9 @@
   <!-- Summary Cards -->
   <div class="grid grid-4">
     <div class="card">
-      <div class="card-title">Balance</div>
+      <div class="card-title">Balance (Unified)</div>
       <div class="card-value" id="balance">-</div>
+      <div class="card-sub" id="balanceDetail"></div>
     </div>
     <div class="card">
       <div class="card-title">Total PnL</div>
@@ -210,8 +211,11 @@ async function refresh() {
     $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
   }
 
-  // Balance
-  if (balance) $('balance').textContent = '$' + Number(balance.balance).toFixed(2);
+  // Balance (Unified)
+  if (balance) {
+    $('balance').textContent = '$' + Number(balance.balance).toFixed(2);
+    $('balanceDetail').textContent = 'Free: $' + Number(balance.freeMargin).toFixed(2) + ' | Margin: $' + Number(balance.marginUsed).toFixed(2);
+  }
 
   // PnL + Stats
   if (stats) {
