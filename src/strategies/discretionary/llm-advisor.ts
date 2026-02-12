@@ -101,12 +101,48 @@ For answering user questions:
   "content": "Your analysis text here"
 }`;
 
+/** Accumulated LLM usage stats */
+export interface LLMUsageStats {
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;     // rough estimate based on model pricing
+  callsToday: number;
+  tokensToday: number;
+  dailyResetTime: number;
+  lastCallAt: number;
+  model: string;
+}
+
+// Approximate pricing per 1M tokens (Haiku 4.5)
+const PRICING: Record<string, { input: number; output: number }> = {
+  'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00 },
+  'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
+};
+
 export class LLMAdvisor {
   private client: Anthropic | null = null;
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   private maxHistoryLength = 20;
 
+  // Token usage tracking
+  private usage: LLMUsageStats;
+
   constructor() {
+    this.usage = {
+      totalCalls: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      estimatedCostUsd: 0,
+      callsToday: 0,
+      tokensToday: 0,
+      dailyResetTime: this.getMidnightUTC(),
+      lastCallAt: 0,
+      model: config.anthropicModel,
+    };
+
     if (config.anthropicApiKey) {
       this.client = new Anthropic({ apiKey: config.anthropicApiKey });
       log.info({ model: config.anthropicModel }, 'LLM advisor initialized');
@@ -117,6 +153,43 @@ export class LLMAdvisor {
 
   isAvailable(): boolean {
     return this.client !== null;
+  }
+
+  /** Get current usage stats */
+  getUsageStats(): Readonly<LLMUsageStats> {
+    this.resetDailyIfNeeded();
+    return { ...this.usage };
+  }
+
+  private trackUsage(inputTokens: number, outputTokens: number): void {
+    this.resetDailyIfNeeded();
+    this.usage.totalCalls++;
+    this.usage.totalInputTokens += inputTokens;
+    this.usage.totalOutputTokens += outputTokens;
+    this.usage.totalTokens += inputTokens + outputTokens;
+    this.usage.callsToday++;
+    this.usage.tokensToday += inputTokens + outputTokens;
+    this.usage.lastCallAt = Date.now();
+
+    // Estimate cost
+    const pricing = PRICING[config.anthropicModel] ?? PRICING['claude-haiku-4-5-20251001'];
+    const inputCost = (inputTokens / 1_000_000) * pricing.input;
+    const outputCost = (outputTokens / 1_000_000) * pricing.output;
+    this.usage.estimatedCostUsd += inputCost + outputCost;
+  }
+
+  private resetDailyIfNeeded(): void {
+    const now = Date.now();
+    if (now > this.usage.dailyResetTime + 86_400_000) {
+      this.usage.callsToday = 0;
+      this.usage.tokensToday = 0;
+      this.usage.dailyResetTime = this.getMidnightUTC();
+    }
+  }
+
+  private getMidnightUTC(): number {
+    const now = new Date();
+    return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   }
 
   private async chat(userMessage: string): Promise<string> {
@@ -136,6 +209,11 @@ export class LLMAdvisor {
         system: SYSTEM_PROMPT,
         messages: this.conversationHistory,
       });
+
+      // Track token usage
+      if (response.usage) {
+        this.trackUsage(response.usage.input_tokens, response.usage.output_tokens);
+      }
 
       const assistantMessage = response.content[0].type === 'text' ? response.content[0].text : '';
       this.conversationHistory.push({ role: 'assistant', content: assistantMessage });
@@ -425,6 +503,11 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
         system: COMPREHENSIVE_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: context }],
       });
+
+      // Track token usage
+      if (response.usage) {
+        this.trackUsage(response.usage.input_tokens, response.usage.output_tokens);
+      }
 
       const text = response.content[0].type === 'text' ? response.content[0].text : '';
       return this.parseComprehensiveResponse(text);
