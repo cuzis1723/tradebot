@@ -400,6 +400,34 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await sendLongMessage(ctx, answer);
   });
 
+  bot.command('do', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const command = ctx.message?.text?.replace(/^\/do\s*/, '').trim();
+    if (!command) {
+      await ctx.reply('Usage: /do &lt;command&gt;\n\nExamples:\n/do 잔고 확인해\n/do spot에서 perp으로 400 USDC 옮겨\n/do ETH 롱 0.01개 5배 레버리지\n/do 모든 포지션 정리해\n/do 펀딩레이트 높은 거 보여줘', { parse_mode: 'HTML' });
+      return;
+    }
+    await ctx.reply('Executing...');
+    try {
+      const advisor = brainRef.getAdvisor();
+      const state = brainRef.getState();
+      const infoSources = brainRef.getInfoSources();
+      const infoContext = infoSources.buildLLMContext();
+      const result = await advisor.executeWithSkills(command, {
+        snapshots: state.latestSnapshots,
+        additionalInfo: infoContext !== 'No external data sources available.' ? infoContext : undefined,
+      });
+      await sendLongMessage(ctx, result);
+    } catch (err) {
+      log.error({ err }, '/do command failed');
+      await ctx.reply(`Execution failed: ${String(err)}`);
+    }
+  });
+
   // === Account Management Commands ===
 
   bot.command('spotbalance', async (ctx: Context) => {
@@ -709,6 +737,7 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/positions - Position analysis\n'
       + '/close &lt;symbol&gt; - Close position\n'
       + '/ask &lt;question&gt; - Ask about market\n'
+      + '/do &lt;command&gt; - LLM executes directly (transfer, trade, etc)\n'
       + '\n/help - This message',
       { parse_mode: 'HTML' }
     );

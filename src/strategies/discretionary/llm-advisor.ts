@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../../config/index.js';
 import { createChildLogger } from '../../monitoring/logger.js';
+import { TRADING_TOOLS, executeToolCall } from '../../core/llm-skills.js';
 import type { MarketSnapshot, TradeProposal, OrderSide, ActiveDiscretionaryPosition, TriggerScore, MarketRegime, MarketDirection, BrainDirectives } from '../../core/types.js';
 import { randomUUID } from 'crypto';
 
@@ -111,6 +112,34 @@ For answering user questions:
   "action": "analysis",
   "content": "Your analysis text here"
 }`;
+
+const SKILLS_SYSTEM_PROMPT = `You are the autonomous trading agent of a crypto perpetual futures bot on Hyperliquid.
+You have DIRECT ACCESS to the exchange via tools. You can check balances, transfer funds, place/close orders, and manage positions.
+
+## Portfolio
+- Total capital: ~$1,000
+- Discretionary: 55% ($550), Momentum: 25% ($250), Cash buffer: 10% ($100)
+- USDC may be in Spot wallet — check and transfer to Perp if needed before trading.
+
+## Risk Rules (ALWAYS follow)
+- Max leverage: 15x (only with highest conviction)
+- Default leverage: 3-5x
+- ALWAYS set a stop loss mentally (or close manually if price hits)
+- Max 25% of allocated capital per trade
+- Max drawdown: 20% hard stop
+
+## Execution Guidelines
+1. Before trading: Check perp balance first. If $0, check spot and transfer.
+2. Before opening: Set leverage for the symbol first.
+3. Use market_open for positions, place_limit_order for precise entries.
+4. Always report what you did clearly.
+5. If something fails, explain the error and suggest what to do.
+
+## Important
+- You are operating with REAL MONEY. Be careful and precise.
+- Double-check sizes and prices before executing.
+- If the user's request seems dangerous (e.g., "go all in 20x"), warn them but still follow if they insist.
+- Respond in the same language as the user's command.`;
 
 /** Accumulated LLM usage stats */
 export interface LLMUsageStats {
@@ -234,6 +263,118 @@ export class LLMAdvisor {
       log.error({ err }, 'LLM API call failed');
       throw err;
     }
+  }
+
+  /**
+   * Chat with tool use (skills) enabled.
+   * The LLM can call Hyperliquid functions directly (check balance, trade, transfer, etc.)
+   * Runs a tool-use loop: LLM → tool_call → execute → result → LLM → ... → final text.
+   */
+  async chatWithTools(userMessage: string, systemOverride?: string): Promise<string> {
+    if (!this.client) throw new Error('LLM advisor not available');
+
+    const messages: Anthropic.MessageParam[] = [
+      { role: 'user', content: userMessage },
+    ];
+
+    const maxRounds = 10; // prevent infinite loops
+    let finalText = '';
+
+    for (let round = 0; round < maxRounds; round++) {
+      const response = await this.client.messages.create({
+        model: config.anthropicModel,
+        max_tokens: 2048,
+        system: systemOverride ?? SKILLS_SYSTEM_PROMPT,
+        tools: TRADING_TOOLS,
+        messages,
+      });
+
+      // Track usage
+      if (response.usage) {
+        this.trackUsage(response.usage.input_tokens, response.usage.output_tokens);
+      }
+
+      // Collect text blocks and tool_use blocks
+      const textBlocks: string[] = [];
+      const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+
+      for (const block of response.content) {
+        if (block.type === 'text') {
+          textBlocks.push(block.text);
+        } else if (block.type === 'tool_use') {
+          toolUseBlocks.push({
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          });
+        }
+      }
+
+      // If no tool calls, we're done
+      if (toolUseBlocks.length === 0) {
+        finalText = textBlocks.join('\n');
+        break;
+      }
+
+      // Add assistant message with tool_use blocks
+      messages.push({ role: 'assistant', content: response.content });
+
+      // Execute each tool call and build tool_result messages
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const toolCall of toolUseBlocks) {
+        log.info({ tool: toolCall.name, input: toolCall.input }, 'LLM executing skill');
+        const result = await executeToolCall(toolCall.name, toolCall.input);
+        log.info({ tool: toolCall.name, resultLen: result.length }, 'Skill executed');
+
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolCall.id,
+          content: result,
+        });
+      }
+
+      messages.push({ role: 'user', content: toolResults });
+
+      // If stop_reason is 'end_turn', break even with tool calls
+      if (response.stop_reason === 'end_turn' && textBlocks.length > 0) {
+        finalText = textBlocks.join('\n');
+        break;
+      }
+    }
+
+    return finalText || '(No response from LLM)';
+  }
+
+  /**
+   * Execute a user command with full trading skills enabled.
+   * The LLM has access to all Hyperliquid operations.
+   * Use this from Telegram /execute or similar commands.
+   */
+  async executeWithSkills(
+    command: string,
+    context?: { snapshots?: MarketSnapshot[]; additionalInfo?: string },
+  ): Promise<string> {
+    let prompt = `User command: "${command}"`;
+
+    if (context?.snapshots && context.snapshots.length > 0) {
+      const brief = context.snapshots.map(s => ({
+        symbol: s.symbol,
+        price: s.price,
+        trend: s.trend,
+        rsi14: s.rsi14.toFixed(1),
+        change_1h: `${s.change1h.toFixed(2)}%`,
+        change_24h: `${s.change24h.toFixed(2)}%`,
+      }));
+      prompt += `\n\nCurrent market context:\n${JSON.stringify(brief, null, 2)}`;
+    }
+
+    if (context?.additionalInfo) {
+      prompt += `\n\n${context.additionalInfo}`;
+    }
+
+    prompt += '\n\nUse the available tools to fulfill this request. Explain what you did.';
+
+    return await this.chatWithTools(prompt);
   }
 
   async analyzeMarket(snapshots: MarketSnapshot[]): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
