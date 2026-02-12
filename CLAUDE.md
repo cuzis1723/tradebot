@@ -47,13 +47,14 @@
 
 | Strategy | Status | 비고 |
 |----------|--------|------|
-| Discretionary v2 | ✅ Implemented | v3에서 정보 우위 + Equity Cross 추가 |
-| Brain (Dual-loop) | ✅ Implemented | 30분 종합 + 5분 긴급 아키텍처 |
-| Momentum Trading | ✅ Implemented | 레버리지 3x 하향 + 파라미터 최적화 필요 |
+| Discretionary v3 | ✅ Implemented | Skill Pipeline + Multi-agent (Propose-Critique) |
+| Brain (Dual-loop) | ✅ Implemented | 30분 종합 (Dual Perspective) + 5분 긴급 |
+| Momentum Trading | ✅ Implemented | EMA crossover + RSI + ATR |
 | External Intelligence | ✅ Implemented | Polymarket + DefiLlama + CoinGecko |
-| Scorer (13 indicators) | ✅ Implemented | 15m 캔들 + Polymarket 급변 지표 추가 필요 |
-| Telegram (확장) | ✅ Implemented | /balance, /usage, /brain, /info 등 |
-| Grid Trading | ✅ Implemented | v3에서 제거 예정 |
+| Scorer (13 indicators) | ✅ Implemented | 가격/모멘텀/변동성/볼륨/구조/크로스 |
+| Telegram (확장) | ✅ Implemented | 20+ 명령어 + Web Dashboard |
+| Web Dashboard | ✅ Implemented | PnL 차트, 포지션, 스코어, 의사결정 로그 |
+| Grid Trading | ✅ Implemented (비활성) | 코드 유지, 엔진에서 미사용 |
 | Funding Rate Arb | ✅ Implemented (비활성) | 엔진에서 제거됨 |
 
 ---
@@ -107,41 +108,6 @@
 
 ---
 
-## 남은 작업 (Todo) — v3 로드맵
-
-### Phase 5: v3 전략 재편 (현재)
-
-#### Phase 5-1: 리스크 강화 + Grid 제거 + Momentum 최적화 (1주)
-- [ ] Grid 전략 완전 제거 (엔진에서 제거, 코드 유지)
-- [ ] 자본 배분 재조정 (Disc 55%, Mom 25%, Equity 10%, Cash 10%)
-- [ ] Momentum 레버리지 5x → 3x 하향
-- [ ] Momentum 파라미터 최적화 (EMA/RSI/ATR 조정)
-- [ ] 연속 손실 시 자동 포지션 축소 (2연패 → 사이즈 50%, 3연패 → 정지)
-- [ ] 드로다운 20% 하드 스톱 강화
-- [ ] 15m 캔들 기반 트리거 지표 추가 (현재 1h 캔들만)
-- [ ] Polymarket 급변 트리거 (>15%p/30min → scorer +4점)
-- [ ] 메인넷 전환
-
-#### Phase 5-2: 내러티브 탐지 + 정보 우위 강화 (1-2주)
-- [ ] DefiLlama TVL 급변 → scorer 트리거 연동
-- [ ] CoinGecko 트렌딩 급등 → scorer 트리거 연동
-- [ ] LLM 컨텍스트에 외부 소스 시그널 요약 자동 포함
-- [ ] 확신도 기반 레버리지 자동 조절 (LLM 응답 → 레버리지 매핑)
-
-#### Phase 5-3: Equity Perps Cross + Kelly Sizing (1주)
-- [ ] Equity Perps 크로스 전략 구현 (크립토-주식 상관관계)
-- [ ] Kelly Criterion 포지션 사이징
-- [ ] 전략 간 상관관계 모니터링
-
-#### Phase 5-4: 실전 최적화 (지속)
-- [ ] 30+ 트레이드 후 파라미터 최적화
-- [ ] 전략별 상세 백테스트
-- [ ] 모니터링 대시보드
-
-**핵심 원칙: Phase 5-1만으로도 메인넷 가동 가능. Phase 5-2~3은 데이터를 수집하면서 점진적으로 추가.**
-
----
-
 ## [설계] v3 아키텍처
 
 ### 듀얼 루프 아키텍처 (확정, 구현 완료)
@@ -159,26 +125,21 @@
   → 관심 종목/내러티브 업데이트       → Telegram 알림
 ```
 
-### Scorer 지표 (13개 구현 완료 + 추가 예정)
+### Scorer 지표 (13개 구현 완료)
 
-| 카테고리 | 지표 | 트리거 조건 | 점수 | 상태 |
-|----------|------|------------|------|------|
-| **가격 급변** | 1h 변동률 | \|변동\| > 2.5% | +3 | ✅ |
-| | 4h 변동률 | \|변동\| > 5% | +3 | ✅ |
-| | 15m 캔들 크기 | > 2x ATR(14) | +2 | ❌ Phase 5-1 |
-| **모멘텀** | RSI(14) | < 25 또는 > 75 | +3 | ✅ |
-| | RSI 다이버전스 | 가격 신고/저 vs RSI 역방향 | +4 | ❌ Phase 5-2 |
-| | EMA(9/21) 크로스 | 1h 내 크로스오버 발생 | +3 | ✅ |
-| **변동성** | ATR 급등 | 현재 ATR > 1.5x 20봉 평균 ATR | +2 | ✅ |
-| | 볼린저 밴드 돌파 | 종가가 2σ 밖으로 돌파 | +2 | ✅ |
-| **볼륨** | 거래량 급증 | 1h 거래량 > 3x 24h 평균 | +3 | ✅ |
-| **시장 구조** | 지지/저항 도달 | 주요 S/R 레벨 ±0.5% 이내 | +2 | ✅ |
-| | OI 급변 | 1h OI 변화 > 5% | +2 | ✅ |
-| | 펀딩레이트 극단 | \|funding\| > 0.05%/h | +1 | ✅ |
-| **크로스 심볼** | BTC 급변 시 알트 | BTC 3%+ 이동 + 알트 미반영 | +3 | ✅ |
-| **외부 정보** | Polymarket 급변 | 확률 >15%p/30min 변동 | +4 | ❌ Phase 5-1 |
-| | DefiLlama TVL 급변 | 체인 TVL >10%/24h 변동 | +2 | ❌ Phase 5-2 |
-| | CoinGecko 급등 | 트렌딩 + 24h >20% 상승 | +2 | ❌ Phase 5-2 |
+| 카테고리 | 지표 | 트리거 조건 | 점수 |
+|----------|------|------------|------|
+| **가격 급변** | 1h 변동률 | \|변동\| > 2.5% | +3 |
+| | 4h 변동률 | \|변동\| > 5% | +3 |
+| **모멘텀** | RSI(14) | < 25 또는 > 75 | +3 |
+| | EMA(9/21) 크로스 | 1h 내 크로스오버 발생 | +3 |
+| **변동성** | ATR 급등 | 현재 ATR > 1.5x 20봉 평균 ATR | +2 |
+| | 볼린저 밴드 돌파 | 종가가 2σ 밖으로 돌파 | +2 |
+| **볼륨** | 거래량 급증 | 1h 거래량 > 3x 24h 평균 | +3 |
+| **시장 구조** | 지지/저항 도달 | 주요 S/R 레벨 ±0.5% 이내 | +2 |
+| | OI 급변 | 1h OI 변화 > 5% | +2 |
+| | 펀딩레이트 극단 | \|funding\| > 0.05%/h | +1 |
+| **크로스 심볼** | BTC 급변 시 알트 | BTC 3%+ 이동 + 알트 미반영 | +3 |
 
 ### 복합 스코어 & 임계값
 
@@ -311,7 +272,8 @@ TG_BOT_TOKEN=           # Telegram bot token
 TG_CHAT_ID=             # Telegram chat ID
 ANTHROPIC_API_KEY=      # Claude API key (Discretionary용)
 ANTHROPIC_MODEL=        # LLM 모델 (default: claude-haiku-4-5-20251001)
-INITIAL_CAPITAL_USD=    # 초기 자본
+DASHBOARD_PORT=         # 웹 대시보드 포트 (default: 3847)
+DASHBOARD_URL=          # 외부 접속 URL (Telegram /dashboard용)
 ```
 
 ---
@@ -331,7 +293,13 @@ tradebot/
 │   │   ├── brain.ts                  # Brain dual-loop (30min comprehensive + 5min urgent)
 │   │   ├── engine.ts                 # Main orchestrator
 │   │   ├── risk-manager.ts           # Drawdown/position limits
-│   │   └── types.ts                  # All shared types
+│   │   ├── trading-tools.ts          # LLM tool-use (get_balance, market_open, etc.)
+│   │   ├── types.ts                  # All shared types
+│   │   └── skills/
+│   │       ├── index.ts              # SkillPipeline orchestrator
+│   │       ├── code-skills.ts        # 4 code skills (context/signal/external/risk)
+│   │       ├── llm-decide.ts         # LLM skills (decide/critique/regime)
+│   │       └── types.ts              # Skill types (CritiqueResult, etc.)
 │   ├── exchanges/
 │   │   └── hyperliquid/
 │   │       ├── client.ts             # HL REST + WS adapter (singleton)
@@ -356,6 +324,9 @@ tradebot/
 │   │       ├── polymarket.ts         # Polymarket Gamma API
 │   │       ├── defillama.ts          # DefiLlama API
 │   │       └── coingecko.ts          # CoinGecko API
+│   ├── dashboard/
+│   │   ├── server.ts                 # HTTP server + API routes
+│   │   └── index.html                # Single-page dashboard UI
 │   └── monitoring/
 │       ├── telegram.ts               # Telegram bot + all commands
 │       └── logger.ts                 # Pino logger
@@ -388,9 +359,10 @@ ESM + TypeScript에서 반드시 `import { Decimal } from 'decimal.js'` 사용.
 
 ### Telegram Commands
 - **General**: /status, /pnl, /pause, /resume, /stop, /help
-- **Account**: /balance, /usage
-- **Brain**: /brain, /info, /info refresh
-- **Discretionary**: /market, /score, /cooldown, /idea, /approve, /modify, /reject, /positions, /close, /ask
+- **Account**: /balance, /spotbalance, /usage, /fills, /fundingpaid, /rates, /fees, /ledger
+- **Brain**: /brain, /market, /score, /cooldown, /info
+- **Discretionary**: /idea, /approve, /modify, /reject, /positions, /close, /ask, /do
+- **Dashboard**: /dashboard
 
 ---
 
