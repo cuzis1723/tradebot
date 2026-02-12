@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/",
     "start": "node dist/index.js",
     "test": "vitest",
     "lint": "eslint src/",

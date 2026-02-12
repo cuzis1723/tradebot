@@ -9,6 +9,8 @@ import {
   defaultBrainConfig,
 } from './config/strategies.js';
 import { setDiscretionaryStrategy, setBrain } from './monitoring/telegram.js';
+import { startDashboard } from './dashboard/server.js';
+import { config } from './config/index.js';
 import { createChildLogger } from './monitoring/logger.js';
 
 const log = createChildLogger('main');
@@ -61,7 +63,13 @@ async function main(): Promise<void> {
   // Start the engine (includes Brain startup)
   await engine.start();
 
-  log.info('TradeBot is running. Press Ctrl+C to stop.');
+  // Start dashboard web server
+  startDashboard(config.dashboardPort, {
+    getStatus: () => engine.getStatus(),
+    getBrain: () => engine.getBrain(),
+  });
+
+  log.info({ dashboard: `http://0.0.0.0:${config.dashboardPort}` }, 'TradeBot is running. Press Ctrl+C to stop.');
 }
 
 main().catch((err) => {

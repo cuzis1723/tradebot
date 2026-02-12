@@ -27,6 +27,9 @@ const configSchema = z.object({
   anthropicApiKey: z.string().optional(),
   anthropicModel: z.string().default('claude-haiku-4-5-20251001'),
 
+  // Dashboard
+  dashboardPort: z.coerce.number().min(0).max(65535).default(3847),
+
   // Risk limits
   maxGlobalDrawdownPct: z.coerce.number().min(0).max(100).default(20),
   maxStrategyDrawdownPct: z.coerce.number().min(0).max(100).default(30),
@@ -51,6 +54,7 @@ function loadConfig(): Config {
     cashBufferPct: process.env.CASH_BUFFER_PCT,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
     anthropicModel: process.env.ANTHROPIC_MODEL,
+    dashboardPort: process.env.DASHBOARD_PORT,
     maxGlobalDrawdownPct: process.env.MAX_GLOBAL_DRAWDOWN_PCT,
     maxStrategyDrawdownPct: process.env.MAX_STRATEGY_DRAWDOWN_PCT,
     maxDailyLossPct: process.env.MAX_DAILY_LOSS_PCT,
