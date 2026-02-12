@@ -42,7 +42,9 @@ You are called when the bot's code-based scorer detects anomalies:
 - Volume: 1h volume >3x 24h average
 - Structure: Near S/R levels, OI rapid change >5%, extreme funding
 - Cross: BTC 3%+ move with alt lagging
+- Info: Polymarket probability shifts >10%, DeFi TVL drops/surges >5%, trending coins
 The trigger score and individual flags are included in the prompt.
+Flags prefixed with "info_" come from external intelligence sources (Polymarket, DefiLlama, CoinGecko).
 
 ## Decision Framework
 - Score 8-10: Standard analysis. Propose only if setup is clean.
@@ -391,6 +393,13 @@ You are NOT making individual trade decisions here — you are setting the CONTE
 3. Risk Level: 1 (calm) to 5 (extreme danger)
 4. Strategy Directives: how each strategy should adjust
 
+## Data Sources
+You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
+- Technical: RSI, EMA, ATR, BB, Volume, OI, Funding
+- Polymarket: Prediction market probabilities (leading indicators for events)
+- DefiLlama: DeFi TVL capital flows across chains
+- CoinGecko: Trending coins showing retail sentiment
+
 ## Portfolio: ~$1,000 total
 - Discretionary (55%): LLM-guided, semi-auto
 - Momentum (25%): EMA crossover, auto
@@ -402,7 +411,7 @@ You are NOT making individual trade decisions here — you are setting the CONTE
   "direction": "bullish",
   "risk_level": 2,
   "confidence": 75,
-  "reasoning": "Brief explanation",
+  "reasoning": "Brief explanation including external intelligence factors",
   "directives": {
     "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
     "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }

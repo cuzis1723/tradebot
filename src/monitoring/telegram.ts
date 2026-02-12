@@ -168,6 +168,22 @@ export function initTelegram(engine: EngineRef): Bot | null {
     await ctx.reply(status + extra, { parse_mode: 'HTML' });
   });
 
+  bot.command('info', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+    const infoSources = brainRef.getInfoSources();
+    const subcommand = ctx.message?.text?.split(' ')[1];
+    if (subcommand === 'refresh') {
+      await ctx.reply('Fetching external data sources...');
+      await infoSources.fetchAll();
+    }
+    const formatted = infoSources.formatAll();
+    await sendLongMessage(ctx, formatted);
+  });
+
   // === Discretionary Trading Commands ===
 
   bot.command('idea', async (ctx: Context) => {
@@ -326,6 +342,8 @@ export function initTelegram(engine: EngineRef): Bot | null {
       + '/market - Market snapshot (all symbols)\n'
       + '/score - Force 5-min urgent scan\n'
       + '/cooldown - LLM cooldown status\n'
+      + '/info - External intelligence (Polymarket, DeFi TVL, Trending)\n'
+      + '/info refresh - Force re-fetch all sources\n'
       + '\n<b>Discretionary Trading:</b>\n'
       + '/idea &lt;text&gt; - Evaluate trade idea\n'
       + '/approve &lt;id&gt; - Approve proposal\n'

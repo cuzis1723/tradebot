@@ -305,3 +305,60 @@ export interface BrainConfig {
   maxDailyUrgentLLM: number;         // 12
   scorer: ScorerConfig;
 }
+
+// === Information Source Types ===
+
+export type InfoSourceType = 'polymarket' | 'defillama' | 'coingecko';
+
+/** A prediction market relevant to crypto trading */
+export interface PredictionMarket {
+  id: string;
+  question: string;
+  probability: number;         // 0-1, current YES probability
+  prevProbability?: number;    // previous reading for delta
+  volume24h: number;           // USD volume in last 24h
+  liquidity: number;           // USD liquidity
+  category: string;            // e.g., "Crypto", "Politics"
+  relevantSymbols: string[];   // mapped trading symbols, e.g., ["BTC-PERP"]
+  updatedAt: number;
+}
+
+/** TVL data from DefiLlama */
+export interface TVLData {
+  chain: string;
+  tvl: number;                 // current TVL in USD
+  tvlChange24h: number;        // % change
+  tvlChange7d: number;         // % change
+  relevantSymbols: string[];   // mapped symbols
+}
+
+/** Trending coin data from CoinGecko */
+export interface TrendingCoin {
+  id: string;
+  symbol: string;
+  name: string;
+  marketCapRank: number;
+  priceChange24h: number;      // %
+  score: number;               // trending score (0-100)
+  relevantSymbol?: string;     // mapped perp symbol if exists
+}
+
+/** Aggregated info signals from all sources */
+export interface InfoSignals {
+  polymarket: PredictionMarket[];
+  tvl: TVLData[];
+  trending: TrendingCoin[];
+  timestamp: number;
+  /** Scored flags from info sources for the scorer */
+  triggerFlags: InfoTriggerFlag[];
+}
+
+/** A trigger flag generated from information sources */
+export interface InfoTriggerFlag {
+  source: InfoSourceType;
+  name: string;
+  score: number;               // points to add to trigger score
+  direction: 'long' | 'short' | 'neutral';
+  relevantSymbol: string;      // e.g., "BTC-PERP"
+  detail: string;
+}
