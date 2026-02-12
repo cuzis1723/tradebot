@@ -242,7 +242,7 @@ async function refresh() {
   // Balance (Unified)
   if (balance) {
     $('balance').textContent = '$' + Number(balance.balance).toFixed(2);
-    $('balanceDetail').textContent = 'Perp: $' + Number(balance.perpValue).toFixed(2) + ' + Spot: $' + Number(balance.spotUsdc).toFixed(2) + ' | Free: $' + Number(balance.freeMargin).toFixed(2);
+    $('balanceDetail').textContent = 'Free: $' + Number(balance.freeMargin).toFixed(2) + ' | Margin: $' + Number(balance.marginUsed).toFixed(2);
   }
 
   // PnL + Stats

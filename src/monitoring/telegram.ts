@@ -197,21 +197,17 @@ export function initTelegram(engine: EngineRef): Bot | null {
         ap => parseFloat(ap.position.szi) !== 0,
       );
 
-      const perpValue = parseFloat(state.marginSummary.accountValue);
-      const spotUsdc = spotState.balances
-        .filter(b => b.coin === 'USDC')
+      const totalBalance = spotState.balances
+        .filter(b => b.coin.toUpperCase().includes('USDC'))
         .reduce((sum, b) => sum + parseFloat(b.total), 0);
-      const totalBalance = perpValue + spotUsdc;
       const marginUsed = parseFloat(state.marginSummary.totalMarginUsed);
       const totalNtlPos = parseFloat(state.marginSummary.totalNtlPos);
       const freeMargin = totalBalance - marginUsed;
 
-      let msg = `<b>Account Balance (Unified)</b>\n\n`;
-      msg += `Total Balance: <b>$${totalBalance.toFixed(2)}</b>\n`;
-      msg += `  Perp Account: $${perpValue.toFixed(2)}\n`;
-      msg += `  Spot USDC: $${spotUsdc.toFixed(2)}\n`;
+      let msg = `<b>Account Balance</b>\n\n`;
+      msg += `Total: <b>$${totalBalance.toFixed(2)}</b>\n`;
       msg += `Margin Used: $${marginUsed.toFixed(2)}\n`;
-      msg += `Free Margin: $${freeMargin.toFixed(2)}\n`;
+      msg += `Free: $${freeMargin.toFixed(2)}\n`;
       msg += `Notional Position: $${totalNtlPos.toFixed(2)}\n`;
 
       if (positions.length > 0) {

@@ -198,20 +198,16 @@ export async function executeToolCall(
           ap => parseFloat(ap.position.szi) !== 0,
         );
         const spotTokens = spotState.balances.filter(
-          b => parseFloat(b.total) > 0 && b.coin !== 'USDC',
+          b => parseFloat(b.total) > 0 && !b.coin.toUpperCase().includes('USDC'),
         );
-        const perpValue = parseFloat(state.marginSummary.accountValue);
-        const spotUsdc = spotState.balances
-          .filter(b => b.coin === 'USDC')
+        const totalBalance = spotState.balances
+          .filter(b => b.coin.toUpperCase().includes('USDC'))
           .reduce((sum, b) => sum + parseFloat(b.total), 0);
-        const totalBalance = perpValue + spotUsdc;
         const marginUsed = parseFloat(state.marginSummary.totalMarginUsed);
         return JSON.stringify({
-          _note: 'Unified account — total_balance = perp + spot USDC combined. This is your TRUE available capital.',
+          _note: 'Unified account — total_balance is the spot USDC which IS your total capital (perp margin is drawn from it).',
           total_balance: totalBalance.toFixed(2),
-          perp_account_value: state.marginSummary.accountValue,
-          spot_usdc: spotUsdc.toFixed(2),
-          margin_used: state.marginSummary.totalMarginUsed,
+          margin_used: marginUsed.toFixed(2),
           free_margin: (totalBalance - marginUsed).toFixed(2),
           notional_position: state.marginSummary.totalNtlPos,
           positions: positions.map(ap => ({
