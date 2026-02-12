@@ -4,9 +4,9 @@
  * decideTrade: Urgent trigger → single LLM call with code-skill summaries
  * assessRegime: 30-min comprehensive → market regime + directives
  */
-import type { MarketSnapshot, TradeProposal, OrderSide } from '../types.js';
+import type { MarketSnapshot, TradeProposal, OrderSide, MarketRegime, MarketDirection } from '../types.js';
 import type { ComprehensiveResponse } from '../../strategies/discretionary/llm-advisor.js';
-import type { DecisionContext } from './types.js';
+import type { DecisionContext, CritiqueResult } from './types.js';
 import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
 import { randomUUID } from 'crypto';
 import { createChildLogger } from '../../monitoring/logger.js';
@@ -197,6 +197,393 @@ export async function assessRegime(
 }
 
 // ============================================================
+// System Prompt: critiqueTrade (adversarial risk review)
+// ============================================================
+
+const CRITIQUE_TRADE_SYSTEM_PROMPT = `You are a risk analyst reviewing a proposed crypto perpetual futures trade.
+Your role is ADVERSARIAL — intentionally look for flaws, over-optimism, and hidden risks.
+
+## Your Checks
+1. Is the stop loss appropriate for the leverage? (Higher leverage → tighter SL needed)
+2. Is the R:R ratio realistic given current volatility?
+3. Do the signal direction and market regime actually align?
+4. Is the leverage excessive relative to the confidence level?
+5. Does external intelligence genuinely confirm the thesis, or is it over-interpreted?
+
+## Scoring (1-10)
+- 1-3: Reject — serious flaws, likely losing trade
+- 4-5: Borderline — reduce size/leverage significantly or reject
+- 6-7: Acceptable — minor adjustments may help
+- 8-10: Strong — proposal is well-reasoned
+
+## Response: JSON only. No markdown.
+{
+  "verdict": "approve" | "reject" | "reduce",
+  "score": 7,
+  "flaws": ["SL too tight for 5x leverage", "Volume declining contradicts breakout thesis"],
+  "adjustments": { "leverage": 3, "size_pct": 10, "stop_loss": 2440 },
+  "reasoning": "Brief explanation of your assessment"
+}
+
+Notes:
+- "adjustments" is optional for "approve", required for "reduce"
+- Be specific in flaws — vague criticism is useless
+- If the trade is solid, say so. Don't reject good trades just to be contrarian.`;
+
+// ============================================================
+// System Prompt: assessRegime — Technical-only perspective
+// ============================================================
+
+const ASSESS_REGIME_TECHNICAL_PROMPT = `You are the technical analysis brain of a crypto trading bot on Hyperliquid.
+
+You assess market state using ONLY technical/on-chain data. No external narrative.
+
+## What You Assess
+1. Market Regime: trending_up, trending_down, range, volatile, unknown
+2. Direction: bullish, bearish, neutral
+3. Risk Level: 1 (calm) to 5 (extreme danger)
+4. Strategy Directives: how each strategy should adjust
+
+## Data You Focus On
+- RSI, EMA crossovers, ATR, Bollinger Bands
+- Volume and volume ratios
+- Open interest changes
+- Funding rates
+- Support/resistance levels
+- Price action across multiple symbols
+
+## Response: JSON only, no markdown.
+{ "regime": "trending_up", "direction": "bullish", "risk_level": 2, "confidence": 75,
+  "reasoning": "Brief TA-based explanation",
+  "directives": {
+    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
+    "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
+  }
+}`;
+
+// ============================================================
+// System Prompt: assessRegime — Macro/External perspective
+// ============================================================
+
+const ASSESS_REGIME_MACRO_PROMPT = `You are the macro/narrative analyst brain of a crypto trading bot on Hyperliquid.
+
+You assess market state from the EXTERNAL INTELLIGENCE perspective — what are market participants betting on?
+
+## What You Assess
+1. Market Regime: trending_up, trending_down, range, volatile, unknown
+2. Direction: bullish, bearish, neutral
+3. Risk Level: 1 (calm) to 5 (extreme danger)
+4. Strategy Directives: how each strategy should adjust
+
+## Data You Focus On
+- Polymarket: Prediction market probability shifts (leading indicator for events)
+- DefiLlama: DeFi TVL capital flows — where is money moving?
+- CoinGecko: Trending coins — what does retail sentiment look like?
+- Narrative detection: Is there a strong story driving the market?
+- Event risk: Upcoming catalysts or binary events?
+
+## Response: JSON only, no markdown.
+{ "regime": "volatile", "direction": "bullish", "risk_level": 3, "confidence": 65,
+  "reasoning": "Brief macro/narrative explanation",
+  "directives": {
+    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 5 },
+    "momentum": { "active": true, "leverage_multiplier": 1.0, "allow_long": true, "allow_short": true }
+  }
+}`;
+
+// ============================================================
+// critiqueTrade: Adversarial review of a trade proposal
+// ============================================================
+
+export async function critiqueTrade(
+  advisor: LLMAdvisor,
+  decision: DecisionContext,
+  proposal: TradeProposal,
+  snapshot: MarketSnapshot | undefined,
+): Promise<CritiqueResult | null> {
+  if (!advisor.isAvailable()) return null;
+
+  const proposalData = {
+    symbol: proposal.symbol,
+    side: proposal.side,
+    entry_price: proposal.entryPrice,
+    stop_loss: proposal.stopLoss,
+    take_profit: proposal.takeProfit,
+    size_pct: Math.round(proposal.size * 100),
+    leverage: proposal.leverage,
+    confidence: proposal.confidence,
+    rr_ratio: proposal.riskRewardRatio.toFixed(2),
+    rationale: proposal.rationale,
+  };
+
+  const parts = [
+    `=== CONTEXT (from code skills) ===`,
+    decision.context.summary,
+    ``,
+    `=== SIGNAL ===`,
+    decision.signal.summary,
+    ``,
+    `=== EXTERNAL ===`,
+    decision.external.summary,
+    ``,
+    `=== RISK ===`,
+    decision.risk.summary,
+    ``,
+    `=== PROPOSED TRADE ===`,
+    JSON.stringify(proposalData, null, 2),
+  ];
+
+  if (snapshot) {
+    parts.push(
+      ``,
+      `=== PRICE DATA (${snapshot.symbol}) ===`,
+      JSON.stringify({
+        price: snapshot.price,
+        rsi14: snapshot.rsi14.toFixed(1),
+        atr14: snapshot.atr14.toFixed(2),
+        ema9: snapshot.ema9.toFixed(2),
+        ema21: snapshot.ema21.toFixed(2),
+        support: snapshot.support.toFixed(2),
+        resistance: snapshot.resistance.toFixed(2),
+        trend: snapshot.trend,
+        funding: `${(snapshot.fundingRate * 100).toFixed(4)}%/h`,
+        ...(snapshot.bollingerUpper !== undefined && { bb_upper: snapshot.bollingerUpper.toFixed(2) }),
+        ...(snapshot.bollingerLower !== undefined && { bb_lower: snapshot.bollingerLower.toFixed(2) }),
+      }, null, 2),
+    );
+  }
+
+  parts.push(``, `CRITIQUE this trade proposal. JSON only.`);
+
+  try {
+    const response = await advisor.callWithSystemPrompt(
+      CRITIQUE_TRADE_SYSTEM_PROMPT,
+      parts.join('\n'),
+      'skill_critique',
+    );
+    return parseCritiqueResponse(response);
+  } catch (err) {
+    log.error({ err }, 'critiqueTrade LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// applyCritique: Merge critique verdict into final decision
+// ============================================================
+
+export function applyCritique(
+  proposal: TradeProposal,
+  critique: CritiqueResult,
+): { action: string; proposal?: TradeProposal; content?: string } {
+  const { verdict, score, adjustments } = critique;
+
+  // Strong approve — pass through as-is
+  if (verdict === 'approve' && score >= 6) {
+    log.info({ symbol: proposal.symbol, score, verdict }, 'Critique approved proposal');
+    return { action: 'propose_trade', proposal };
+  }
+
+  // Hard reject — cancel the trade
+  if (verdict === 'reject' && score <= 3) {
+    log.info({ symbol: proposal.symbol, score, flaws: critique.flaws }, 'Critique rejected proposal');
+    return { action: 'no_trade', content: `Critique rejected (score ${score}): ${critique.flaws.join('; ')}` };
+  }
+
+  // Reduce or soft reject (score 4-5) — apply adjustments
+  const adjusted: TradeProposal = { ...proposal };
+
+  if (verdict === 'reduce' && adjustments) {
+    if (adjustments.leverage !== undefined) adjusted.leverage = Math.min(15, adjustments.leverage);
+    if (adjustments.size_pct !== undefined) adjusted.size = adjustments.size_pct / 100;
+    if (adjustments.stop_loss !== undefined) adjusted.stopLoss = adjustments.stop_loss;
+    if (adjustments.take_profit !== undefined) adjusted.takeProfit = adjustments.take_profit;
+  } else if (verdict === 'reject' && score >= 4) {
+    // Soft reject: downgrade to minimum entry
+    adjusted.leverage = 3;
+    adjusted.size = Math.min(adjusted.size, 0.10); // cap at 10%
+  }
+
+  // Recalculate R:R after adjustments
+  adjusted.riskRewardRatio = Math.abs(adjusted.takeProfit - adjusted.entryPrice) /
+    Math.abs(adjusted.entryPrice - adjusted.stopLoss);
+
+  log.info({
+    symbol: proposal.symbol,
+    verdict,
+    score,
+    origLev: proposal.leverage,
+    newLev: adjusted.leverage,
+    origSize: Math.round(proposal.size * 100),
+    newSize: Math.round(adjusted.size * 100),
+  }, 'Critique adjusted proposal');
+
+  return { action: 'propose_trade', proposal: adjusted };
+}
+
+// ============================================================
+// assessRegimeTechnical: TA-only perspective for dual assessment
+// ============================================================
+
+export async function assessRegimeTechnical(
+  advisor: LLMAdvisor,
+  technicalContext: string,
+  balance?: number,
+): Promise<ComprehensiveResponse | null> {
+  if (!advisor.isAvailable()) return null;
+
+  let contextWithBalance = technicalContext;
+  if (balance !== undefined) {
+    const balanceCtx = [
+      `## Current Portfolio Balance`,
+      `- Total: $${balance.toFixed(2)}`,
+      `- Discretionary (55%): ~$${(balance * 0.55).toFixed(2)}`,
+    ].join('\n');
+    contextWithBalance = `${balanceCtx}\n\n${technicalContext}`;
+  }
+
+  try {
+    return await advisor.callComprehensiveWithSystemPrompt(
+      ASSESS_REGIME_TECHNICAL_PROMPT,
+      contextWithBalance,
+    );
+  } catch (err) {
+    log.error({ err }, 'assessRegimeTechnical LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// assessRegimeMacro: External/narrative perspective
+// ============================================================
+
+export async function assessRegimeMacro(
+  advisor: LLMAdvisor,
+  macroContext: string,
+  balance?: number,
+): Promise<ComprehensiveResponse | null> {
+  if (!advisor.isAvailable()) return null;
+
+  let contextWithBalance = macroContext;
+  if (balance !== undefined) {
+    const balanceCtx = [
+      `## Current Portfolio Balance`,
+      `- Total: $${balance.toFixed(2)}`,
+      `- Discretionary (55%): ~$${(balance * 0.55).toFixed(2)}`,
+    ].join('\n');
+    contextWithBalance = `${balanceCtx}\n\n${macroContext}`;
+  }
+
+  try {
+    return await advisor.callComprehensiveWithSystemPrompt(
+      ASSESS_REGIME_MACRO_PROMPT,
+      contextWithBalance,
+    );
+  } catch (err) {
+    log.error({ err }, 'assessRegimeMacro LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// mergeRegimeAssessments: Combine TA + Macro perspectives
+// ============================================================
+
+const REGIME_CONSERVATISM: Record<string, number> = {
+  volatile: 4,
+  trending_down: 3,
+  trending_up: 2,
+  range: 1,
+  unknown: 0,
+};
+
+export function mergeRegimeAssessments(
+  technical: ComprehensiveResponse,
+  macro: ComprehensiveResponse,
+): ComprehensiveResponse {
+  // Regime: if they agree, use it; if they conflict, pick the more conservative one
+  let regime: MarketRegime;
+  if (technical.regime === macro.regime) {
+    regime = technical.regime;
+  } else {
+    const techScore = REGIME_CONSERVATISM[technical.regime] ?? 0;
+    const macroScore = REGIME_CONSERVATISM[macro.regime] ?? 0;
+    regime = techScore >= macroScore ? technical.regime : macro.regime;
+  }
+
+  // Direction: agree → use it; conflict → neutral
+  let direction: MarketDirection;
+  if (technical.direction === macro.direction) {
+    direction = technical.direction;
+  } else {
+    direction = 'neutral';
+  }
+
+  // Risk: take the higher (more conservative) value
+  const riskLevel = Math.max(technical.riskLevel, macro.riskLevel);
+
+  // Confidence: agreement boosts it, conflict lowers it
+  let confidence: number;
+  if (technical.direction === macro.direction && technical.regime === macro.regime) {
+    confidence = Math.min(100, Math.round((technical.confidence + macro.confidence) / 2 + 10));
+  } else {
+    confidence = Math.max(0, Math.min(technical.confidence, macro.confidence) - 10);
+  }
+
+  // Directives: pick the more conservative settings
+  const techDir = technical.directives;
+  const macroDir = macro.directives;
+  const mergedDirectives = techDir ?? macroDir;
+
+  if (techDir && macroDir) {
+    // Merge discretionary: lower max_leverage, more restrictive bias
+    if (techDir.discretionary && macroDir.discretionary) {
+      mergedDirectives!.discretionary = {
+        active: techDir.discretionary.active && macroDir.discretionary.active,
+        bias: technical.direction === macro.direction
+          ? techDir.discretionary.bias
+          : 'neutral',
+        focusSymbols: [...new Set([
+          ...(techDir.discretionary.focusSymbols ?? []),
+          ...(macroDir.discretionary.focusSymbols ?? []),
+        ])],
+        maxLeverage: Math.min(
+          techDir.discretionary.maxLeverage ?? 10,
+          macroDir.discretionary.maxLeverage ?? 10,
+        ),
+      };
+    }
+    // Merge momentum: lower multiplier, restrictive direction
+    if (techDir.momentum && macroDir.momentum) {
+      mergedDirectives!.momentum = {
+        active: techDir.momentum.active && macroDir.momentum.active,
+        leverageMultiplier: Math.min(
+          techDir.momentum.leverageMultiplier ?? 1,
+          macroDir.momentum.leverageMultiplier ?? 1,
+        ),
+        allowLong: techDir.momentum.allowLong && macroDir.momentum.allowLong,
+        allowShort: techDir.momentum.allowShort && macroDir.momentum.allowShort,
+      };
+    }
+  }
+
+  const reasoning = `Technical: ${technical.reasoning} | Macro: ${macro.reasoning}`;
+
+  log.info({
+    techRegime: technical.regime,
+    macroRegime: macro.regime,
+    mergedRegime: regime,
+    techDir: technical.direction,
+    macroDir: macro.direction,
+    mergedDir: direction,
+    confidence,
+    riskLevel,
+  }, 'Merged dual regime assessments');
+
+  return { regime, direction, riskLevel, confidence, reasoning, directives: mergedDirectives };
+}
+
+// ============================================================
 // Response Parsing
 // ============================================================
 
@@ -239,5 +626,32 @@ function parseTradeResponse(response: string): { action: string; proposal?: Trad
     return { action: 'unknown', content: response };
   } catch {
     return { action: 'analysis', content: response };
+  }
+}
+
+function parseCritiqueResponse(response: string): CritiqueResult | null {
+  try {
+    let jsonStr = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+    const data = JSON.parse(jsonStr);
+
+    const verdict = data.verdict;
+    if (verdict !== 'approve' && verdict !== 'reject' && verdict !== 'reduce') {
+      log.warn({ verdict }, 'Invalid critique verdict');
+      return null;
+    }
+
+    return {
+      verdict,
+      score: Math.min(10, Math.max(1, data.score ?? 5)),
+      flaws: Array.isArray(data.flaws) ? data.flaws : [],
+      adjustments: data.adjustments,
+      reasoning: data.reasoning ?? '',
+    };
+  } catch {
+    log.warn({ response: response.slice(0, 200) }, 'Failed to parse critique response');
+    return null;
   }
 }

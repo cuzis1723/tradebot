@@ -53,6 +53,20 @@ export interface RiskAssessment {
   canTrade: boolean;
 }
 
+/** Result from the critique LLM skill (adversarial review of a trade proposal) */
+export interface CritiqueResult {
+  verdict: 'approve' | 'reject' | 'reduce';
+  score: number; // 1-10
+  flaws: string[];
+  adjustments?: {
+    leverage?: number;
+    size_pct?: number;
+    stop_loss?: number;
+    take_profit?: number;
+  };
+  reasoning: string;
+}
+
 /** Combined context passed to the LLM decideTrade skill */
 export interface DecisionContext {
   context: SkillResult<ContextAssessment>;

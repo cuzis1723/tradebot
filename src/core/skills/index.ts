@@ -5,7 +5,15 @@
  * Comprehensive: code skills compress context → 1 LLM assessRegime
  */
 import { assessContext, readSignals, checkExternal, assessRisk } from './code-skills.js';
-import { decideTrade, assessRegime } from './llm-decide.js';
+import {
+  decideTrade,
+  assessRegime,
+  critiqueTrade,
+  applyCritique,
+  assessRegimeTechnical,
+  assessRegimeMacro,
+  mergeRegimeAssessments,
+} from './llm-decide.js';
 import { logSkillExecution } from '../../data/storage.js';
 import { createChildLogger } from '../../monitoring/logger.js';
 import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
@@ -79,9 +87,32 @@ export class SkillPipeline {
       return { action: 'no_trade', content };
     }
 
-    // Phase 3: LLM decideTrade call
+    // Phase 3: LLM decideTrade call (Proposer)
     const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
     const result = await decideTrade(this.advisor, decisionCtx, targetSnapshot);
+
+    // Phase 4: Critique (only if trade proposed — no extra cost on no_trade)
+    if (result.action === 'propose_trade' && result.proposal) {
+      log.info({ symbol: triggerScore.symbol }, 'Skill pipeline: running critique on proposal');
+      const critique = await critiqueTrade(this.advisor, decisionCtx, result.proposal, targetSnapshot);
+      if (critique) {
+        const finalResult = applyCritique(result.proposal, critique);
+
+        const durationMs = Date.now() - startMs;
+        log.info({
+          symbol: triggerScore.symbol,
+          action: finalResult.action,
+          critiqueVerdict: critique.verdict,
+          critiqueScore: critique.score,
+          durationMs,
+        }, 'Skill pipeline: decision complete (with critique)');
+
+        this.logExecution('urgent', triggerScore.symbol, decisionCtx, finalResult.action, 0, 0, durationMs);
+        return finalResult;
+      }
+      // Critique failed (null) — fall through with original proposal
+      log.warn({ symbol: triggerScore.symbol }, 'Critique call failed, using original proposal');
+    }
 
     const durationMs = Date.now() - startMs;
     log.info({
@@ -149,6 +180,68 @@ export class SkillPipeline {
       ? positions.map(p => `${p.symbol} ${p.side} @${p.entryPrice} SL:${p.stopLoss} TP:${p.takeProfit}`).join('; ')
       : 'No open positions';
 
+    const hasExternalSignals = externalParts.length > 0;
+
+    // Dual perspective: when external signals exist, run TA and Macro in parallel
+    if (hasExternalSignals) {
+      const technicalContext = [
+        `=== PREVIOUS STATE ===`,
+        contextResult.summary,
+        ``,
+        `=== MARKET DATA ===`,
+        JSON.stringify(marketData, null, 2),
+        ``,
+        `=== NOTABLE SIGNALS ===`,
+        signalSummaries.length > 0 ? signalSummaries.join('\n') : 'No notable signals (all scores < 3)',
+        ``,
+        `=== RISK & POSITIONS ===`,
+        riskResult.summary,
+        positionSummary,
+        ``,
+        `=== TASK ===`,
+        `Assess market regime using ONLY technical analysis.`,
+        `Set strategy directives. Respond with JSON only.`,
+      ].join('\n');
+
+      const macroContext = [
+        `=== PREVIOUS STATE ===`,
+        contextResult.summary,
+        ``,
+        `=== EXTERNAL INTELLIGENCE ===`,
+        externalParts.join('\n'),
+        ``,
+        `=== MARKET DATA (brief) ===`,
+        JSON.stringify(marketData.map(s => ({ symbol: s.symbol, price: s.price, change_24h: s.change_24h, trend: s.trend })), null, 2),
+        ``,
+        `=== RISK & POSITIONS ===`,
+        riskResult.summary,
+        positionSummary,
+        ``,
+        `=== TASK ===`,
+        `Assess market regime from external intelligence / macro perspective.`,
+        `What are market participants betting on? What narratives are driving flows?`,
+        `Set strategy directives. Respond with JSON only.`,
+      ].join('\n');
+
+      log.info('Skill pipeline: running dual regime assessment (TA + Macro)');
+      const [technical, macro] = await Promise.all([
+        assessRegimeTechnical(this.advisor, technicalContext, balance),
+        assessRegimeMacro(this.advisor, macroContext, balance),
+      ]);
+
+      let response: ComprehensiveResponse | null;
+      if (technical && macro) {
+        response = mergeRegimeAssessments(technical, macro);
+      } else {
+        response = technical ?? macro;
+      }
+
+      const durationMs = Date.now() - startMs;
+      log.info({ durationMs, regime: response?.regime, dual: true }, 'Skill pipeline: comprehensive complete');
+      return response;
+    }
+
+    // Single perspective: no external signals, use standard assessRegime
     const compressedContext = [
       `=== PREVIOUS STATE ===`,
       contextResult.summary,
@@ -160,7 +253,7 @@ export class SkillPipeline {
       signalSummaries.length > 0 ? signalSummaries.join('\n') : 'No notable signals (all scores < 3)',
       ``,
       `=== EXTERNAL INTELLIGENCE ===`,
-      externalParts.length > 0 ? externalParts.join('\n') : 'No external signals',
+      'No external signals',
       ``,
       `=== RISK & POSITIONS ===`,
       riskResult.summary,
@@ -175,7 +268,7 @@ export class SkillPipeline {
     const response = await assessRegime(this.advisor, compressedContext, balance);
 
     const durationMs = Date.now() - startMs;
-    log.info({ durationMs, regime: response?.regime }, 'Skill pipeline: comprehensive complete');
+    log.info({ durationMs, regime: response?.regime, dual: false }, 'Skill pipeline: comprehensive complete');
 
     return response;
   }
@@ -210,5 +303,5 @@ export class SkillPipeline {
 
 // Re-export skills for direct use
 export { assessContext, readSignals, checkExternal, assessRisk } from './code-skills.js';
-export { decideTrade, assessRegime } from './llm-decide.js';
-export type { SkillResult, DecisionContext, ContextAssessment, SignalReading, ExternalIntelAssessment, RiskAssessment } from './types.js';
+export { decideTrade, assessRegime, critiqueTrade, applyCritique, assessRegimeTechnical, assessRegimeMacro, mergeRegimeAssessments } from './llm-decide.js';
+export type { SkillResult, DecisionContext, ContextAssessment, SignalReading, ExternalIntelAssessment, RiskAssessment, CritiqueResult } from './types.js';
