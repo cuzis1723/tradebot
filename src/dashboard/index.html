@@ -260,15 +260,17 @@ header { display: flex; align-items: center; justify-content: space-between; pad
   <!-- Chart -->
   <div class="chart-section">
     <div class="chart-header">
-      <div class="chart-title" id="chartLabel">Daily PnL</div>
+      <div class="chart-title" id="chartLabel">Account Value</div>
       <div class="chart-tabs">
         <div class="chart-toggle-group" id="chartSourceTabs">
           <button class="chart-tab active" data-source="pnl">PnL</button>
           <button class="chart-tab" data-source="balance">Balance</button>
         </div>
-        <div class="chart-toggle-group" id="chartModeTabs">
-          <button class="chart-tab active" data-mode="daily">Daily</button>
-          <button class="chart-tab" data-mode="cumulative">Cumulative</button>
+        <div class="chart-toggle-group" id="chartPeriodTabs">
+          <button class="chart-tab" data-period="day">1D</button>
+          <button class="chart-tab" data-period="week">1W</button>
+          <button class="chart-tab active" data-period="month">1M</button>
+          <button class="chart-tab" data-period="allTime">All</button>
         </div>
       </div>
     </div>
@@ -304,8 +306,9 @@ const $ = id => document.getElementById(id);
 let mainChart = null;
 let pieChart = null;
 let chartSource = 'pnl';
-let chartMode = 'daily';
+let chartPeriod = 'month';
 let pnlCache = [];
+let portfolioCache = null; // { accountValue: [{ts,value}], pnl: [{ts,value}] }
 let currentEquity = 0;
 let shareDataUrl = '';
 
@@ -448,53 +451,60 @@ function initChart() {
   });
 }
 
+function fmtChartTime(ts) {
+  const d = new Date(ts);
+  return String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0') + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
 function updateChart() {
-  if (!mainChart || !pnlCache.length) return;
-  const labels = pnlCache.map(d => d.date.slice(5));
+  if (!mainChart) return;
+
+  // Use portfolio API data (primary) or fall back to fills-based pnlCache
+  if (portfolioCache && portfolioCache.pnl.length > 0) {
+    updateChartFromPortfolio();
+  } else if (pnlCache.length > 0) {
+    updateChartFromFills();
+  }
+}
+
+function updateChartFromPortfolio() {
+  const periodLabels = { day: '24H', week: '7D', month: '30D', allTime: 'All Time' };
+  const periodLabel = periodLabels[portfolioCache.period] || '';
 
   if (chartSource === 'pnl') {
-    if (chartMode === 'daily') {
-      mainChart.config.type = 'bar';
-      mainChart.data = { labels, datasets: [{
-        data: pnlCache.map(d => d.pnl),
-        backgroundColor: pnlCache.map(d => d.pnl >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
-        borderRadius: 3,
-      }]};
-      $('chartLabel').textContent = 'Daily PnL';
-    } else {
-      mainChart.config.type = 'line';
-      mainChart.data = { labels, datasets: [{
-        data: pnlCache.map(d => d.cumulative),
-        borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
-        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
-      }]};
-      $('chartLabel').textContent = 'Cumulative PnL';
-    }
+    const pnlData = portfolioCache.pnl;
+    const labels = pnlData.map(d => fmtChartTime(d.ts));
+    mainChart.config.type = 'line';
+    mainChart.data = { labels, datasets: [{
+      data: pnlData.map(d => d.value),
+      borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
+      fill: true, tension: 0.35, pointRadius: 1, pointHoverRadius: 4, borderWidth: 2,
+    }]};
+    $('chartLabel').textContent = 'PnL (' + periodLabel + ')';
   } else {
-    // Balance mode: reverse-engineer daily balance from cumulative PnL + current equity
-    const totalCum = pnlCache.length > 0 ? pnlCache[pnlCache.length - 1].cumulative : 0;
-    const eq = currentEquity || 0;
-    const balances = pnlCache.map(d => eq - (totalCum - d.cumulative));
-
-    if (chartMode === 'cumulative') {
-      mainChart.config.type = 'line';
-      mainChart.data = { labels, datasets: [{
-        data: balances,
-        borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.06)',
-        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
-      }]};
-      $('chartLabel').textContent = 'Balance History';
-    } else {
-      const changes = balances.map((b, i) => i === 0 ? 0 : b - balances[i - 1]);
-      mainChart.config.type = 'bar';
-      mainChart.data = { labels, datasets: [{
-        data: changes,
-        backgroundColor: changes.map(c => c >= 0 ? 'rgba(20,184,166,0.7)' : 'rgba(239,68,68,0.7)'),
-        borderRadius: 3,
-      }]};
-      $('chartLabel').textContent = 'Daily Balance Change';
-    }
+    const balData = portfolioCache.accountValue;
+    const labels = balData.map(d => fmtChartTime(d.ts));
+    mainChart.config.type = 'line';
+    mainChart.data = { labels, datasets: [{
+      data: balData.map(d => d.value),
+      borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.06)',
+      fill: true, tension: 0.35, pointRadius: 1, pointHoverRadius: 4, borderWidth: 2,
+    }]};
+    $('chartLabel').textContent = 'Account Value (' + periodLabel + ')';
   }
+  mainChart.update('none');
+}
+
+function updateChartFromFills() {
+  // Fallback: only used when portfolio API is unavailable
+  const labels = pnlCache.map(d => d.date.slice(5));
+  mainChart.config.type = 'line';
+  mainChart.data = { labels, datasets: [{
+    data: pnlCache.map(d => d.cumulative),
+    borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
+    fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+  }]};
+  $('chartLabel').textContent = 'Cumulative PnL (fills)';
   mainChart.update('none');
 }
 
@@ -508,13 +518,16 @@ document.querySelectorAll('#chartSourceTabs .chart-tab').forEach(tab => {
   });
 });
 
-// Chart toggle: mode tabs (Daily / Cumulative)
-document.querySelectorAll('#chartModeTabs .chart-tab').forEach(tab => {
+// Chart toggle: period tabs (1D / 1W / 1M / All)
+document.querySelectorAll('#chartPeriodTabs .chart-tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('#chartModeTabs .chart-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#chartPeriodTabs .chart-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    chartMode = tab.dataset.mode;
-    updateChart();
+    chartPeriod = tab.dataset.period;
+    // Fetch new period data
+    fetchJson('/api/portfolio?period=' + chartPeriod).then(data => {
+      if (data && data.pnl) { portfolioCache = data; updateChart(); }
+    });
   });
 });
 
@@ -847,9 +860,9 @@ async function toggleReport(el, id) {
 
 // ── Main ──
 async function refresh() {
-  const [status, equity, balance, pnlData, fills, positions, stats, decisions, reports] = await Promise.all([
+  const [status, equity, balance, portfolio, fills, positions, stats, decisions, reports] = await Promise.all([
     fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/balance'),
-    fetchJson('/api/daily-pnl?days=90'), fetchJson('/api/fills?limit=50'),
+    fetchJson('/api/portfolio?period=' + chartPeriod), fetchJson('/api/fills?limit=50'),
     fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=500'),
     fetchJson('/api/reports?limit=10'),
   ]);
@@ -858,7 +871,7 @@ async function refresh() {
   renderPositions(positions, equity?.equity);
   renderTimeline(decisions);
   renderReports(reports);
-  if (pnlData && pnlData.length > 0) { pnlCache = pnlData; updateChart(); }
+  if (portfolio && portfolio.pnl) { portfolioCache = portfolio; updateChart(); }
 }
 animator = new SpriteAnimator('charCanvas');
 initChart(); initPieChart(); refresh(); setInterval(refresh, 30000);

@@ -153,6 +153,39 @@ function apiDailyPnl(req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
+function apiPortfolio(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const period = url.searchParams.get('period') ?? 'allTime';
+
+  const hl = getHyperliquidClient();
+  hl.getPortfolio().then((raw: unknown) => {
+    if (!raw || !Array.isArray(raw)) {
+      json(res, { error: 'No portfolio data' }, 500);
+      return;
+    }
+
+    // portfolio response: array of [periodName, { accountValueHistory, pnlHistory, vlm }]
+    const entry = (raw as Array<[string, { accountValueHistory: [number, string][]; pnlHistory: [number, string][]; vlm: string }]>)
+      .find(([name]) => name === period);
+
+    if (!entry) {
+      json(res, { error: `Period '${period}' not found` }, 400);
+      return;
+    }
+
+    const [, data] = entry;
+    json(res, {
+      period,
+      accountValue: data.accountValueHistory.map(([ts, val]) => ({ ts, value: parseFloat(val) })),
+      pnl: data.pnlHistory.map(([ts, val]) => ({ ts, value: parseFloat(val) })),
+      volume: parseFloat(data.vlm),
+    });
+  }).catch(err => {
+    log.warn({ err }, 'Dashboard: portfolio fetch failed');
+    json(res, { error: 'Portfolio fetch failed' }, 500);
+  });
+}
+
 function apiPositions(_req: IncomingMessage, res: ServerResponse): void {
   const hl = getHyperliquidClient();
   hl.getPositions().then(positions => {
@@ -333,6 +366,7 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/status': apiStatus,
   '/api/trades': apiTrades,
   '/api/daily-pnl': apiDailyPnl,
+  '/api/portfolio': apiPortfolio,
   '/api/positions': apiPositions,
   '/api/scores': apiScores,
   '/api/stats': apiTradeStats,
