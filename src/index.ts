@@ -16,7 +16,7 @@ import { createChildLogger } from './monitoring/logger.js';
 const log = createChildLogger('main');
 
 async function main(): Promise<void> {
-  log.info('TradeBot starting...');
+  log.info('pangjibot starting...');
 
   // Engine now requires BrainConfig
   const engine = new TradingEngine(defaultBrainConfig);
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     getBrain: () => engine.getBrain(),
   });
 
-  log.info({ dashboard: `http://0.0.0.0:${config.dashboardPort}` }, 'TradeBot is running. Press Ctrl+C to stop.');
+  log.info({ dashboard: `http://0.0.0.0:${config.dashboardPort}` }, 'pangjibot is running. Press Ctrl+C to stop.');
 }
 
 main().catch((err) => {

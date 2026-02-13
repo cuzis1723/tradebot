@@ -5,11 +5,20 @@ import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
 import type { Brain } from '../core/brain.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
+import { promptManager, type PromptKey } from '../core/prompt-manager.js';
 
 const log = createChildLogger('telegram');
 
 let bot: Bot | null = null;
 let brainRef: Brain | null = null;
+
+// Pending prompt edit (awaiting user confirmation)
+let pendingEdit: {
+  key: PromptKey;
+  newText: string;
+  summary: string;
+  expiresAt: number;
+} | null = null;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let heartbeatLogInterval: ReturnType<typeof setInterval> | null = null;
 let lastBotAlive = 0;
@@ -171,16 +180,212 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
     await ctx.reply(`<b>Web Dashboard</b>\n\n<a href="${url}">${url}</a>`, { parse_mode: 'HTML' });
   });
 
+  // === /prompt — LLM 시스템 프롬프트 관리 ===
+
+  bot.command('prompt', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    const args = ctx.message?.text?.replace(/^\/prompt\s*/, '').trim() ?? '';
+    const parts = args.split(/\s+/);
+    const subcommand = parts[0]?.toLowerCase();
+
+    // /prompt list
+    if (!subcommand || subcommand === 'list') {
+      const entries = promptManager.listAll();
+      const modifiedCount = entries.filter(e => e.isModified).length;
+      let msg = `<b>LLM System Prompts</b> (${entries.length} total, ${modifiedCount} modified)\n\n`;
+      entries.forEach((e, i) => {
+        const tag = e.isModified ? ' [MODIFIED]' : '';
+        msg += `${i + 1}. <code>${e.key}</code> — ${e.description}${tag}\n`;
+      });
+      msg += `\nCommands:\n/prompt view &lt;key&gt;\n/prompt edit &lt;key&gt; &lt;instruction&gt;\n/prompt reset &lt;key&gt;\n/prompt history &lt;key&gt;`;
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+      return;
+    }
+
+    // /prompt view <key>
+    if (subcommand === 'view') {
+      const key = parts[1];
+      if (!key || !promptManager.isValidKey(key)) {
+        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        return;
+      }
+      const entries = promptManager.listAll();
+      const entry = entries.find(e => e.key === key)!;
+      const status = entry.isModified
+        ? `MODIFIED (${new Date(entry.modifiedAt!).toLocaleString()})`
+        : 'DEFAULT';
+      const header = `<b>${key}</b> — ${entry.description}\nStatus: ${status}\nLength: ${entry.currentText.length} chars\n\n`;
+      await sendLongMessage(ctx, header + entry.currentText);
+      return;
+    }
+
+    // /prompt edit <key> <instruction>
+    if (subcommand === 'edit') {
+      const key = parts[1];
+      if (!key || !promptManager.isValidKey(key)) {
+        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        return;
+      }
+      const instruction = parts.slice(2).join(' ');
+      if (!instruction) {
+        await ctx.reply(`Usage: /prompt edit &lt;key&gt; &lt;instruction&gt;\n\nExample: /prompt edit decide_trade 좀 더 보수적으로, 레버리지 최대 10x`, { parse_mode: 'HTML' });
+        return;
+      }
+      if (!brainRef) {
+        await ctx.reply('Brain not active.');
+        return;
+      }
+
+      await ctx.reply('Editing prompt...');
+
+      try {
+        const advisor = brainRef.getAdvisor();
+        const currentText = promptManager.get(key as PromptKey);
+
+        const metaPrompt = `You are a prompt engineering assistant for a crypto trading bot.
+
+You will receive:
+1. The CURRENT system prompt text
+2. A user instruction describing how to modify it
+
+Your job:
+- Apply the requested changes to the prompt
+- Preserve the overall structure and JSON response format requirements
+- Do NOT remove safety rules or risk management sections unless explicitly asked
+- Keep changes minimal and targeted
+- Maintain the same response format instructions
+
+CRITICAL SAFETY RULES (never remove these from any prompt):
+- Stop loss requirements
+- Maximum leverage caps
+- R:R ratio minimums
+- JSON response format requirements
+
+Respond with JSON only:
+{
+  "modified_prompt": "The full modified prompt text...",
+  "changes_summary": "Brief description of what was changed",
+  "warnings": ["Any safety concerns about the modification"]
+}`;
+
+        const userMsg = `CURRENT PROMPT (key: ${key}):\n\`\`\`\n${currentText}\n\`\`\`\n\nINSTRUCTION: ${instruction}`;
+
+        const response = await advisor.callWithSystemPrompt(metaPrompt, userMsg, 'prompt_edit');
+
+        // Parse LLM response
+        let jsonStr = response;
+        const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+        const data = JSON.parse(jsonStr);
+        const newText = data.modified_prompt;
+        const summary = data.changes_summary ?? 'No summary';
+        const warnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
+
+        if (!newText || newText.length < 50) {
+          await ctx.reply('LLM returned invalid prompt (too short). Edit cancelled.');
+          return;
+        }
+
+        // Store pending edit
+        pendingEdit = {
+          key: key as PromptKey,
+          newText,
+          summary,
+          expiresAt: Date.now() + 5 * 60_000, // 5 min timeout
+        };
+
+        let msg = `<b>Prompt Edit Preview</b>\n\n`;
+        msg += `Key: <code>${key}</code>\n`;
+        msg += `Changes: ${summary}\n`;
+        if (warnings.length > 0) {
+          msg += `\nWarnings:\n${warnings.map(w => `- ${w}`).join('\n')}\n`;
+        }
+        msg += `\nNew length: ${newText.length} chars (was ${currentText.length})\n`;
+        msg += `\n<b>Apply this change? Reply Y to confirm.</b>`;
+        await ctx.reply(msg, { parse_mode: 'HTML' });
+      } catch (err) {
+        log.error({ err }, '/prompt edit failed');
+        await ctx.reply(`Edit failed: ${String(err)}`);
+      }
+      return;
+    }
+
+    // /prompt reset <key>
+    if (subcommand === 'reset') {
+      const key = parts[1];
+      if (!key || !promptManager.isValidKey(key)) {
+        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        return;
+      }
+      promptManager.reset(key as PromptKey);
+      await ctx.reply(`Prompt <code>${key}</code> reset to default.`, { parse_mode: 'HTML' });
+      return;
+    }
+
+    // /prompt history <key>
+    if (subcommand === 'history') {
+      const key = parts[1];
+      if (!key || !promptManager.isValidKey(key)) {
+        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        return;
+      }
+      const history = promptManager.getHistory(key as PromptKey, 5);
+      if (history.length === 0) {
+        await ctx.reply(`No modification history for <code>${key}</code>.`, { parse_mode: 'HTML' });
+        return;
+      }
+      let msg = `<b>Prompt History: ${key}</b>\n\n`;
+      history.forEach((h, i) => {
+        const ago = Math.floor((Date.now() - h.timestamp) / 60_000);
+        const agoStr = ago < 60 ? `${ago}min ago` : `${Math.floor(ago / 60)}h ago`;
+        msg += `${i + 1}. ${agoStr} — ${h.change_description ?? 'no description'}\n`;
+      });
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+      return;
+    }
+
+    await ctx.reply(`Unknown subcommand. Use /prompt list, view, edit, reset, or history.`);
+  });
+
+  // Handle pending prompt edit confirmation (Y/y/yes)
+  bot.on('message:text', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+
+    const text = ctx.message?.text?.trim();
+    if (!text) return;
+
+    // Check for pending prompt edit confirmation
+    if (pendingEdit && (text === 'Y' || text === 'y' || text.toLowerCase() === 'yes')) {
+      if (Date.now() > pendingEdit.expiresAt) {
+        pendingEdit = null;
+        await ctx.reply('Edit expired (5min timeout). Run /prompt edit again.');
+        return;
+      }
+
+      promptManager.set(pendingEdit.key, pendingEdit.newText, pendingEdit.summary);
+      await ctx.reply(`Prompt <code>${pendingEdit.key}</code> updated successfully.`, { parse_mode: 'HTML' });
+      pendingEdit = null;
+      return;
+    }
+
+    // Clear expired pending edit
+    if (pendingEdit && Date.now() > pendingEdit.expiresAt) {
+      pendingEdit = null;
+    }
+  });
+
   // === /help ===
 
   bot.command('help', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     await ctx.reply(
-      '<b>TradeBot Commands</b>\n\n'
+      '<b>pangjibot Commands</b>\n\n'
       + '/balance - Account balance &amp; positions\n'
       + '/status - Latest LLM analysis result\n'
       + '/score - Latest scorer metrics\n'
       + '/do &lt;command&gt; - Talk to LLM (trade, ask, transfer, etc)\n'
+      + '/prompt - Manage LLM system prompts\n'
       + '/dashboard - Web dashboard link\n'
       + '/help - This message',
       { parse_mode: 'HTML' }

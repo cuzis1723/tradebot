@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TradeBot Dashboard</title>
+<title>pangjibot Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -221,7 +221,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     <header>
       <div class="logo">
         <span class="live-dot" id="liveDot"></span>
-        <h1>TradeBot</h1>
+        <h1>pangjibot</h1>
       </div>
       <div class="header-right">
         <span class="uptime-badge" id="uptime">connecting...</span>
@@ -302,7 +302,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
     </div>
 
-    <div class="share-watermark" id="shareWatermark">TradeBot &mdash; AI Crypto Trading Bot</div>
+    <div class="share-watermark" id="shareWatermark">pangjibot &mdash; AI Crypto Trading Bot</div>
   </div>
 
   <!-- Positions -->
@@ -721,19 +721,19 @@ function downloadImage() {
   if (!shareDataUrl) return;
   const a = document.createElement('a');
   a.href = shareDataUrl;
-  a.download = 'tradebot-' + new Date().toISOString().slice(0,10) + '.png';
+  a.download = 'pangjibot-' + new Date().toISOString().slice(0,10) + '.png';
   a.click();
 }
 async function shareToX() {
   if (navigator.share && navigator.canShare) {
     try {
       const blob = await fetch(shareDataUrl).then(r => r.blob());
-      const file = new File([blob], 'tradebot.png', { type: 'image/png' });
+      const file = new File([blob], 'pangjibot.png', { type: 'image/png' });
       if (navigator.canShare({ files: [file] })) { await navigator.share({ text: 'My AI trading bot performance', files: [file] }); closeShare(); return; }
     } catch {}
   }
   downloadImage();
-  window.open('https://x.com/intent/post?text=' + encodeURIComponent('My AI trading bot performance #TradeBot #CryptoTrading'), '_blank');
+  window.open('https://x.com/intent/post?text=' + encodeURIComponent('My AI trading bot performance #pangjibot #CryptoTrading'), '_blank');
   closeShare();
 }
 $('shareModal').addEventListener('click', e => { if (e.target === $('shareModal')) closeShare(); });

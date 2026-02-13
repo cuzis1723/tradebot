@@ -6,6 +6,7 @@ import { Brain } from './brain.js';
 import { getHyperliquidClient, type HyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { initTelegram, sendAlert, sendTradeAlert, stopTelegram } from '../monitoring/telegram.js';
 import { getDb, closeDb } from '../data/storage.js';
+import { promptManager } from './prompt-manager.js';
 import type { Strategy } from '../strategies/base.js';
 import type { EngineStatus, BrainConfig, TradeProposal, MarketSnapshot, StrategyPositionSummary } from './types.js';
 
@@ -62,6 +63,9 @@ export class TradingEngine {
 
     // Initialize database
     getDb();
+
+    // Initialize prompt manager (load overrides from DB)
+    promptManager.init();
 
     // Connect to Hyperliquid
     await this.hlClient.connect();
@@ -200,7 +204,7 @@ export class TradingEngine {
     this.running = true;
     this.startTime = Date.now();
 
-    await sendAlert('🤖 <b>TradeBot Started</b>\n\n🧠 Brain: 30min comprehensive + 5min urgent scan\nAll strategies initialized and running.');
+    await sendAlert('🤖 <b>pangjibot Started</b>\n\n🧠 Brain: 30min comprehensive + 5min urgent scan\nAll strategies initialized and running.');
     log.info('Trading engine started successfully');
   }
 
