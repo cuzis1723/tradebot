@@ -5,7 +5,7 @@ const DEFAULT_SCORER_CONFIG: ScorerConfig = {
   llmThreshold: 8,
   alertThreshold: 5,
   symbolCooldownMs: 2 * 60 * 60 * 1000,  // 2h
-  globalCooldownMs: 30 * 60 * 1000,       // 30min
+  globalCooldownMs: 15 * 60 * 1000,       // 15min
   maxDailyCalls: 12,
   lossCooldownMs: 4 * 60 * 60 * 1000,    // 4h
   maxConsecutiveLosses: 2,
@@ -301,8 +301,10 @@ export class MarketScorer {
   }
 
   // Check if a symbol passes cooldown rules for LLM call
-  canCallLLM(symbol: string): { allowed: boolean; reason?: string } {
+  // score param: if >= 11 (urgent), global cooldown is bypassed
+  canCallLLM(symbol: string, score?: number): { allowed: boolean; reason?: string } {
     const now = Date.now();
+    const isUrgent = (score ?? 0) >= 11;
 
     // Reset daily counter if new day
     if (now > this.cooldown.dailyResetTime + 86_400_000) {
@@ -310,25 +312,25 @@ export class MarketScorer {
       this.cooldown.dailyResetTime = this.getMidnightUTC();
     }
 
-    // Daily limit
+    // Daily limit (never bypassed)
     if (this.cooldown.dailyCallCount >= this.config.maxDailyCalls) {
       return { allowed: false, reason: `Daily limit reached (${this.config.maxDailyCalls})` };
     }
 
-    // Global cooldown
-    if (now - this.cooldown.globalLastCall < this.config.globalCooldownMs) {
+    // Global cooldown — bypassed for urgent (11+) signals
+    if (!isUrgent && now - this.cooldown.globalLastCall < this.config.globalCooldownMs) {
       const remaining = Math.ceil((this.config.globalCooldownMs - (now - this.cooldown.globalLastCall)) / 60_000);
       return { allowed: false, reason: `Global cooldown: ${remaining}min remaining` };
     }
 
-    // Symbol cooldown
+    // Symbol cooldown (never bypassed — same symbol spam prevention)
     const symbolLast = this.cooldown.symbolCooldowns.get(symbol) ?? 0;
     if (now - symbolLast < this.config.symbolCooldownMs) {
       const remaining = Math.ceil((this.config.symbolCooldownMs - (now - symbolLast)) / 60_000);
       return { allowed: false, reason: `${symbol} cooldown: ${remaining}min remaining` };
     }
 
-    // Consecutive loss cooldown
+    // Consecutive loss cooldown (never bypassed)
     if (this.cooldown.consecutiveLosses >= this.config.maxConsecutiveLosses) {
       if (now - this.cooldown.lastLossTime < this.config.lossCooldownMs) {
         const remaining = Math.ceil((this.config.lossCooldownMs - (now - this.cooldown.lastLossTime)) / 60_000);

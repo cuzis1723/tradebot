@@ -427,9 +427,9 @@ export class Brain extends EventEmitter {
           continue;
         }
 
-        const cooldownCheck = this.scorer.canCallLLM(score.symbol);
+        const cooldownCheck = this.scorer.canCallLLM(score.symbol, score.totalScore);
         if (!cooldownCheck.allowed) {
-          log.info({ symbol: score.symbol, reason: cooldownCheck.reason }, 'LLM blocked by cooldown');
+          log.info({ symbol: score.symbol, score: score.totalScore, reason: cooldownCheck.reason }, 'LLM blocked by cooldown');
           this.emit('alert', `${this.scorer.formatScore(score)}\n⏳ ${cooldownCheck.reason}`);
           continue;
         }
@@ -607,9 +607,9 @@ export class Brain extends EventEmitter {
           continue;
         }
 
-        const cooldownCheck = this.scalpScorer.canCallLLM(score.symbol);
+        const cooldownCheck = this.scalpScorer.canCallLLM(score.symbol, score.totalScore);
         if (!cooldownCheck.allowed) {
-          log.debug({ symbol: score.symbol, reason: cooldownCheck.reason }, 'Scalp LLM blocked by cooldown');
+          log.debug({ symbol: score.symbol, score: score.totalScore, reason: cooldownCheck.reason }, 'Scalp LLM blocked by cooldown');
           continue;
         }
 
