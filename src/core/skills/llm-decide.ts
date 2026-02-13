@@ -11,7 +11,7 @@ import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
 import { randomUUID } from 'crypto';
 import { createChildLogger } from '../../monitoring/logger.js';
 import { logTradeLesson } from '../../data/storage.js';
-import { promptManager } from '../prompt-manager.js';
+import { promptManager, type PromptKey } from '../prompt-manager.js';
 
 const log = createChildLogger('llm-decide');
 
@@ -26,6 +26,7 @@ export async function decideTrade(
   advisor: LLMAdvisor,
   decision: DecisionContext,
   targetSnapshot: MarketSnapshot | undefined,
+  promptKey: PromptKey = 'decide_trade',
 ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
   if (!advisor.isAvailable()) {
     return { action: 'no_trade', content: 'LLM advisor not available' };
@@ -85,9 +86,9 @@ export async function decideTrade(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      promptManager.get('decide_trade'),
+      promptManager.get(promptKey),
       prompt,
-      'skill_decide',
+      promptKey === 'decide_scalp_trade' ? 'skill_scalp_decide' : 'skill_decide',
     );
 
     return parseTradeResponse(response);

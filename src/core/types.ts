@@ -181,6 +181,15 @@ export interface DiscretionaryConfig {
   proposalTimeoutMs: number; // how long to wait for user approval
 }
 
+export interface ScalpConfig {
+  symbols: string[];
+  capitalUsd: number;
+  leverage: number;
+  maxConcurrentPositions: number;  // max simultaneous scalp positions
+  maxHoldTimeMs: number;           // hard max hold time (force close after)
+  proposalTimeoutMs: number;       // expiry for auto-execute
+}
+
 export interface MarketSnapshot {
   symbol: string;
   price: number;
@@ -306,6 +315,14 @@ export interface BrainDirectives {
     allowLong: boolean;
     allowShort: boolean;
   };
+  scalp: {
+    active: boolean;
+    bias: 'long' | 'short' | 'neutral';
+    maxLeverage: number;
+    allowLong: boolean;
+    allowShort: boolean;
+    focusSymbols: string[];
+  };
 }
 
 export interface MarketState {
@@ -362,6 +379,10 @@ export interface BrainConfig {
   maxDailyComprehensive: number;     // 48 (every 30 min)
   maxDailyUrgentLLM: number;         // 12
   scorer: ScorerConfig;
+  // Scalp scan settings (separate from urgent)
+  scalpScanIntervalMs: number;       // 2 min = 120_000
+  maxDailyScalpLLM: number;          // 24
+  scalpScorer: ScorerConfig;         // separate scorer config for scalp
 }
 
 // === Information Source Types ===

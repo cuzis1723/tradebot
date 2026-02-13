@@ -35,6 +35,14 @@ const DEFAULT_MARKET_STATE: MarketState = {
       allowLong: true,
       allowShort: true,
     },
+    scalp: {
+      active: true,
+      bias: 'neutral',
+      maxLeverage: 5,
+      allowLong: true,
+      allowShort: true,
+      focusSymbols: [],
+    },
   },
   latestSnapshots: [],
   latestScores: [],
@@ -54,12 +62,15 @@ const DEFAULT_MARKET_STATE: MarketState = {
  * Events emitted:
  * - 'stateUpdate' (MarketState): When state changes after comprehensive analysis
  * - 'tradeProposal' (TradeProposal, MarketSnapshot): Urgent trigger produced a trade
+ * - 'scalpProposal' (TradeProposal, MarketSnapshot): Scalp trigger produced a trade
+ * - 'scalpPositionManagement' (PositionManagementAction): Scalp position management
  * - 'alert' (string): Score 5-7 alert, or informational message
  */
 export class Brain extends EventEmitter {
   private config: BrainConfig;
   private analyzer: MarketAnalyzer;
   private scorer: MarketScorer;
+  private scalpScorer: MarketScorer;
   private advisor: LLMAdvisor;
   private infoSources: InfoSourceAggregator;
   private skillPipeline: SkillPipeline;
@@ -67,10 +78,13 @@ export class Brain extends EventEmitter {
 
   private comprehensiveTimeout: ReturnType<typeof setTimeout> | null = null;
   private urgentInterval: ReturnType<typeof setInterval> | null = null;
+  private scalpInterval: ReturnType<typeof setInterval> | null = null;
   private dailyResetTime = 0;
+  private scalpTriggerCount = 0;
 
   // Injected references for position context
   private getPositions: () => ActiveDiscretionaryPosition[] = () => [];
+  private getScalpPositions: () => ActiveDiscretionaryPosition[] = () => [];
   private getBalance: () => Promise<number> = async () => 0;
 
   constructor(cfg: BrainConfig) {
@@ -78,6 +92,7 @@ export class Brain extends EventEmitter {
     this.config = cfg;
     this.analyzer = new MarketAnalyzer();
     this.scorer = new MarketScorer(cfg.scorer);
+    this.scalpScorer = new MarketScorer(cfg.scalpScorer);
     this.advisor = new LLMAdvisor();
     this.infoSources = new InfoSourceAggregator();
     this.skillPipeline = new SkillPipeline(this.advisor);
@@ -88,6 +103,11 @@ export class Brain extends EventEmitter {
   /** Wire up position accessor for LLM context */
   setPositionAccessor(fn: () => ActiveDiscretionaryPosition[]): void {
     this.getPositions = fn;
+  }
+
+  /** Wire up scalp position accessor for LLM context */
+  setScalpPositionAccessor(fn: () => ActiveDiscretionaryPosition[]): void {
+    this.getScalpPositions = fn;
   }
 
   /** Wire up balance accessor for dynamic balance in LLM prompts */
@@ -123,6 +143,13 @@ export class Brain extends EventEmitter {
       });
     }, this.config.urgentScanIntervalMs);
 
+    // 2-min scalp scan loop (separate scorer, lower thresholds)
+    this.scalpInterval = setInterval(() => {
+      this.runScalpScan().catch(err => {
+        log.error({ err }, 'Scalp scan error');
+      });
+    }, this.config.scalpScanIntervalMs);
+
     // Initial runs: urgent scan first (fast, no LLM), then comprehensive
     await this.runUrgentScan();
     await this.runComprehensiveAnalysis();
@@ -130,7 +157,7 @@ export class Brain extends EventEmitter {
     log.info('Brain started');
   }
 
-  /** Stop both loops */
+  /** Stop all loops */
   stop(): void {
     if (this.comprehensiveTimeout) {
       clearTimeout(this.comprehensiveTimeout);
@@ -139,6 +166,10 @@ export class Brain extends EventEmitter {
     if (this.urgentInterval) {
       clearInterval(this.urgentInterval);
       this.urgentInterval = null;
+    }
+    if (this.scalpInterval) {
+      clearInterval(this.scalpInterval);
+      this.scalpInterval = null;
     }
     log.info('Brain stopped');
   }
@@ -304,6 +335,9 @@ export class Brain extends EventEmitter {
           }
           if (response.directives.momentum) {
             Object.assign(this.state.directives.momentum, response.directives.momentum);
+          }
+          if (response.directives.scalp) {
+            Object.assign(this.state.directives.scalp, response.directives.scalp);
           }
         }
 
@@ -528,6 +562,142 @@ export class Brain extends EventEmitter {
     } catch (err) {
       log.debug({ err }, 'Position management check failed');
     }
+
+    // Scalp position management: check scalp positions separately
+    try {
+      const scalpPositions = this.getScalpPositions();
+      if (scalpPositions.length > 0 && snapshots.length > 0) {
+        const actions = await this.skillPipeline.runPositionManagement(
+          scalpPositions, snapshots, this.state.regime, this.state.direction,
+        );
+        for (const action of actions) {
+          this.emit('scalpPositionManagement', action);
+          this.emit('alert', `⚡ Scalp ${this.formatPositionAction(action)}`);
+        }
+      }
+    } catch (err) {
+      log.debug({ err }, 'Scalp position management check failed');
+    }
+  }
+
+  // ========== 2-MIN SCALP SCAN ==========
+
+  async runScalpScan(): Promise<void> {
+    const now = Date.now();
+    this.resetDailyCountersIfNeeded(now);
+
+    log.debug('Running scalp scan...');
+
+    // Reuse latest snapshots from urgent scan (avoid duplicate API calls)
+    const snapshots = this.state.latestSnapshots;
+    if (snapshots.length === 0) return;
+
+    // Score with scalp scorer (lower thresholds)
+    const infoFlags = this.infoSources.getLastSignals()?.triggerFlags ?? [];
+    const scores = this.scalpScorer.scoreAll(snapshots, infoFlags);
+
+    for (const score of scores) {
+      const action = this.scalpScorer.getAction(score);
+      if (action === 'ignore' || action === 'alert') continue;
+
+      // LLM call for scalp (threshold 6+)
+      if (action === 'llm_call' || action === 'llm_urgent') {
+        if (this.scalpTriggerCount >= this.config.maxDailyScalpLLM) {
+          log.debug({ symbol: score.symbol }, 'Daily scalp LLM limit reached');
+          continue;
+        }
+
+        const cooldownCheck = this.scalpScorer.canCallLLM(score.symbol);
+        if (!cooldownCheck.allowed) {
+          log.debug({ symbol: score.symbol, reason: cooldownCheck.reason }, 'Scalp LLM blocked by cooldown');
+          continue;
+        }
+
+        if (!this.advisor.isAvailable()) continue;
+
+        log.info({ symbol: score.symbol, score: score.totalScore, action }, 'Scalp: triggering skill pipeline');
+        this.scalpScorer.recordLLMCall(score.symbol);
+        this.scalpTriggerCount++;
+
+        try {
+          const positions = [...this.getPositions(), ...this.getScalpPositions()];
+          const balance = await this.getBalance();
+
+          // Fetch enhanced data for scalp decision
+          let l2Book: { bids: Array<{ px: string; sz: string }>; asks: Array<{ px: string; sz: string }> } | null = null;
+          let candles4h: Array<{ close: number; open: number }> | null = null;
+          let candles15m: Array<{ close: number; open: number }> | null = null;
+
+          try {
+            const hl = getHyperliquidClient();
+            const coin = score.symbol.replace('-PERP', '');
+
+            const [l2, fills4h, fills15m] = await Promise.all([
+              hl.getL2Book(coin).catch(() => null),
+              this.analyzer.fetchCandles(score.symbol, '4h', 24).catch(() => null),
+              this.analyzer.fetchCandles(score.symbol, '1h', 4).catch(() => null),
+            ]);
+
+            l2Book = l2 as typeof l2Book;
+            candles4h = fills4h as typeof candles4h;
+            candles15m = fills15m as typeof candles15m;
+          } catch (dataErr) {
+            log.debug({ dataErr, symbol: score.symbol }, 'Failed to fetch enhanced data for scalp');
+          }
+
+          const infoSignals = this.infoSources.getLastSignals();
+
+          const result = await this.skillPipeline.runUrgentDecision(
+            score, snapshots, this.state, infoSignals, positions, balance,
+            this.scalpScorer.getConsecutiveLosses(),
+            l2Book, null, candles4h, candles15m,
+            'scalp', // scalp mode
+          );
+
+          if (result.action === 'propose_trade' && result.proposal) {
+            const snapshot = snapshots.find(s => s.symbol === score.symbol);
+            log.info({ proposal: result.proposal }, 'Scalp: trade proposal generated');
+
+            // Log to database
+            try {
+              const decisionId = logBrainDecision(
+                'scalp_trigger',
+                this.state.regime,
+                this.state.direction,
+                this.state.riskLevel,
+                this.state.confidence,
+                `Scalp trigger for ${score.symbol} (score: ${score.totalScore})`,
+                null,
+                score.symbol,
+                score.totalScore,
+              );
+              const proposalDbId = logTradeProposal(
+                result.proposal.id,
+                result.proposal.symbol,
+                result.proposal.side,
+                result.proposal.entryPrice,
+                result.proposal.stopLoss ?? 0,
+                result.proposal.takeProfit ?? 0,
+                result.proposal.leverage ?? 3,
+                result.proposal.confidence ?? 'medium',
+                result.proposal.rationale ?? '',
+                'auto_executed',
+                decisionId,
+              );
+              updateBrainDecisionTrade(decisionId, proposalDbId);
+            } catch (e) {
+              log.warn({ err: e }, 'Failed to log scalp trade proposal');
+            }
+
+            this.emit('scalpProposal', result.proposal, snapshot);
+          } else if (result.action === 'no_trade') {
+            log.debug({ reason: result.content }, 'Scalp: LLM says no trade');
+          }
+        } catch (err) {
+          log.error({ err }, 'Scalp LLM call failed');
+        }
+      }
+    }
   }
 
   // ========== Helpers ==========
@@ -576,6 +746,7 @@ export class Brain extends EventEmitter {
       ``,
       `<b>Directives:</b>`,
       `  Disc: bias=${this.state.directives.discretionary.bias}, maxLev=${this.state.directives.discretionary.maxLeverage}x`,
+      `  Scalp: bias=${this.state.directives.scalp.bias}, maxLev=${this.state.directives.scalp.maxLeverage}x, active=${this.state.directives.scalp.active}`,
       `  Mom: levMul=${this.state.directives.momentum.leverageMultiplier}x, long=${this.state.directives.momentum.allowLong}, short=${this.state.directives.momentum.allowShort}`,
       ``,
       `<i>${this.state.reasoning}</i>`,
@@ -607,6 +778,7 @@ export class Brain extends EventEmitter {
     if (now > this.dailyResetTime + 86_400_000) {
       this.state.comprehensiveCount = 0;
       this.state.urgentTriggerCount = 0;
+      this.scalpTriggerCount = 0;
       this.dailyResetTime = this.getMidnightUTC();
     }
   }

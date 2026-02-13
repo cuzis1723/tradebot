@@ -73,6 +73,7 @@ export class SkillPipeline {
     recentFills?: Array<{ side: string; px: string; sz: string; time: number }> | null,
     candles4h?: Array<{ close: number; open: number }> | null,
     candles15m?: Array<{ close: number; open: number }> | null,
+    mode: 'swing' | 'scalp' = 'swing',
   ): Promise<{ action: string; proposal?: TradeProposal; content?: string; scenarioAnalysis?: ScenarioAnalysis }> {
     const startMs = Date.now();
     const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
@@ -84,7 +85,8 @@ export class SkillPipeline {
     const riskResult = assessRisk(balance, positions, consecutiveLosses);
 
     // New enhanced code skills
-    const estimatedNotional = balance * 0.55 * 0.15 * (triggerScore.totalScore >= 11 ? 8 : 5); // rough estimate
+    const capitalPct = mode === 'scalp' ? 0.20 : 0.55;
+    const estimatedNotional = balance * capitalPct * 0.15 * (triggerScore.totalScore >= 11 ? 8 : 5); // rough estimate
     const liquidityResult = checkLiquidity(
       l2Book ?? null,
       triggerScore.symbol,
@@ -164,11 +166,12 @@ export class SkillPipeline {
     }
 
     // Phase 3: LLM decideTrade call (with enhanced context injected into prompt)
-    const result = await decideTrade(this.advisor, decisionCtx, targetSnapshot);
+    const promptKey = mode === 'scalp' ? 'decide_scalp_trade' as const : 'decide_trade' as const;
+    const result = await decideTrade(this.advisor, decisionCtx, targetSnapshot, promptKey);
 
-    // Phase 4: Scenario planning (only for high confidence proposals)
+    // Phase 4: Scenario planning (only for high confidence swing proposals, skip for scalp)
     let scenarioAnalysis: ScenarioAnalysis | null = null;
-    if (result.action === 'propose_trade' && result.proposal) {
+    if (mode !== 'scalp' && result.action === 'propose_trade' && result.proposal) {
       const isHighConviction = triggerScore.totalScore >= 11 ||
         result.proposal.confidence === 'high' ||
         (result.proposal.confidence as string) === 'highest';

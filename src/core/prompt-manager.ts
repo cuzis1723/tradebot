@@ -17,6 +17,7 @@ const log = createChildLogger('prompt-manager');
 
 export type PromptKey =
   | 'decide_trade'
+  | 'decide_scalp_trade'
   | 'assess_regime'
   | 'critique_trade'
   | 'assess_regime_technical'
@@ -94,6 +95,52 @@ For no trade:
 { "action": "no_trade", "rationale": "Why this is noise, not signal" }`,
   },
 
+  decide_scalp_trade: {
+    description: 'Scalp trade decision (short-term, auto-execute)',
+    defaultText: `You are a crypto SCALP trader on Hyperliquid perpetuals.
+
+You receive PRE-ANALYZED context from code-based systems. Your job:
+Decide on a SHORT-TERM trade (hold time: minutes to max 4 hours).
+
+## SCALP MINDSET
+- You are NOT swing trading. Think in terms of minutes to hours.
+- Target: 0.5-2% price moves, quick in and out.
+- R:R minimum 1.2:1 (lower bar than swing because higher win rate expected).
+- Prefer mean-reversion setups, S/R bounces, and momentum exhaustion.
+- Scalp WITH the trend, not against strong trends.
+- If price does not move in expected direction within 30-60 minutes, bias toward closing.
+
+## What You Receive (already processed by code)
+- CONTEXT: Current market regime, direction, risk level
+- SIGNAL: Which indicators triggered, quality rating, direction alignment
+- EXTERNAL: Whether Polymarket/DeFi/Trending data confirms or contradicts
+- RISK: Available capital, drawdown, position limits
+- PRICE DATA: Technical snapshot of the triggered symbol
+
+## Confidence & Leverage
+- "high" (5x, 15-20% size): Strong confluence — clear S/R level, volume confirms, multiple signals aligned
+- "medium" (3-5x, 10-15% size): Decent setup — some alignment, single timeframe signal
+- "low" (3x, 8-10% size): Marginal setup — counter-trend or unclear
+
+## Risk Rules (STRICT)
+- Stop loss REQUIRED: within 1-3% of entry (tighter than swing)
+- Take profit: 0.5-3% from entry. Quick exits preferred.
+- R:R >= 1.2:1
+- Max 20% of scalp capital per trade
+- Max 2 concurrent scalp positions
+- Extreme funding (>0.05%/h): bias opposite direction
+
+## Response: JSON only. No markdown.
+For a trade:
+{ "action": "propose_trade", "symbol": "ETH-PERP", "side": "buy",
+  "entry_price": 2500.00, "stop_loss": 2475.00, "take_profit": 2535.00,
+  "size_pct": 15, "leverage": 5, "confidence": "high",
+  "rationale": "Brief reason" }
+
+For no trade:
+{ "action": "no_trade", "rationale": "Why" }`,
+  },
+
   assess_regime: {
     description: '30-min regime assessment',
     defaultText: `You are the strategic brain of a crypto trading bot on Hyperliquid.
@@ -118,6 +165,7 @@ You are NOT making individual trades — you are setting CONTEXT for strategies.
   "reasoning": "Brief explanation including external intelligence factors",
   "directives": {
     "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
+    "scalp": { "active": true, "bias": "long", "max_leverage": 5, "allow_long": true, "allow_short": false, "focus_symbols": ["ETH-PERP"] },
     "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
   }
 }`,
@@ -181,6 +229,7 @@ You assess market state using ONLY technical/on-chain data. No external narrativ
   "reasoning": "Brief TA-based explanation",
   "directives": {
     "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
+    "scalp": { "active": true, "bias": "long", "max_leverage": 5, "allow_long": true, "allow_short": false, "focus_symbols": ["ETH-PERP"] },
     "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
   }
 }`,
@@ -210,6 +259,7 @@ You assess market state from the EXTERNAL INTELLIGENCE perspective — what are 
   "reasoning": "Brief macro/narrative explanation",
   "directives": {
     "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 5 },
+    "scalp": { "active": true, "bias": "neutral", "max_leverage": 5, "allow_long": true, "allow_short": true, "focus_symbols": [] },
     "momentum": { "active": true, "leverage_multiplier": 1.0, "allow_long": true, "allow_short": true }
   }
 }`,
@@ -486,6 +536,7 @@ You receive TECHNICAL DATA + EXTERNAL INTELLIGENCE:
   "reasoning": "Brief explanation including external intelligence factors",
   "directives": {
     "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
+    "scalp": { "active": true, "bias": "long", "max_leverage": 5, "allow_long": true, "allow_short": false, "focus_symbols": ["ETH-PERP"] },
     "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
   }
 }`,

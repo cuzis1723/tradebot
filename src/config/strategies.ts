@@ -1,4 +1,4 @@
-import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, BrainConfig, EquityCrossConfig, DynamicSymbolConfig } from '../core/types.js';
+import type { GridConfig, FundingArbConfig, MomentumConfig, DiscretionaryConfig, ScalpConfig, BrainConfig, EquityCrossConfig, DynamicSymbolConfig } from '../core/types.js';
 
 export const defaultGridConfig: GridConfig = {
   symbol: 'ETH-PERP',
@@ -29,10 +29,19 @@ export const defaultMomentumConfig: MomentumConfig = {
 
 export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  capitalUsd: 550,
+  capitalUsd: 350,  // Reduced from 550 to make room for scalp
   leverage: 5,
   analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
+};
+
+export const defaultScalpConfig: ScalpConfig = {
+  symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
+  capitalUsd: 200,
+  leverage: 5,
+  maxConcurrentPositions: 2,
+  maxHoldTimeMs: 4 * 60 * 60 * 1000, // 4 hours hard max
+  proposalTimeoutMs: 2 * 60 * 1000,  // 2 minutes
 };
 
 export const defaultEquityCrossConfig: EquityCrossConfig = {
@@ -76,5 +85,18 @@ export const defaultBrainConfig: BrainConfig = {
     maxDailyCalls: 12,
     lossCooldownMs: 4 * 60 * 60 * 1000,       // 4h
     maxConsecutiveLosses: 2,
+  },
+  // Scalp: faster scan, lower thresholds, shorter cooldowns
+  scalpScanIntervalMs: 2 * 60 * 1000,         // 2 min
+  maxDailyScalpLLM: 24,                        // 24 scalp LLM calls/day
+  scalpScorer: {
+    scanIntervalMs: 2 * 60 * 1000,             // 2 min
+    llmThreshold: 6,                            // lower bar for scalps (vs 8)
+    alertThreshold: 4,
+    symbolCooldownMs: 20 * 60 * 1000,           // 20 min (vs 2h)
+    globalCooldownMs: 10 * 60 * 1000,           // 10 min (vs 30min)
+    maxDailyCalls: 24,                           // more frequent (vs 12)
+    lossCooldownMs: 60 * 60 * 1000,              // 1h (vs 4h)
+    maxConsecutiveLosses: 3,                     // more tolerant (vs 2)
   },
 };

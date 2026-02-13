@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { createChildLogger } from './logger.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
+import type { ScalpStrategy } from '../strategies/scalp/index.js';
 import type { Brain } from '../core/brain.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
 import { promptManager, type PromptKey } from '../core/prompt-manager.js';
@@ -11,6 +12,7 @@ const log = createChildLogger('telegram');
 
 let bot: Bot | null = null;
 let brainRef: Brain | null = null;
+let scalpRef: ScalpStrategy | null = null;
 
 // Pending prompt edit (awaiting user confirmation)
 let pendingEdit: {
@@ -44,6 +46,10 @@ export function setDiscretionaryStrategy(strategy: DiscretionaryStrategy): void 
 
 export function setBrain(brain: Brain): void {
   brainRef = brain;
+}
+
+export function setScalpStrategy(strategy: ScalpStrategy): void {
+  scalpRef = strategy;
 }
 
 export function initTelegram(_engine: Record<string, unknown>): Bot | null {
@@ -375,19 +381,68 @@ Respond with JSON only:
     }
   });
 
+  // === /scalp — Scalp 포지션 & 상태 ===
+
+  bot.command('scalp', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!scalpRef) {
+      await ctx.reply('Scalp strategy not active.');
+      return;
+    }
+
+    const status = scalpRef.getStatus();
+    const perf = scalpRef.getPerformance();
+    const positions = scalpRef.formatPositions();
+    const winRate = perf.totalTrades > 0
+      ? ((perf.winningTrades / perf.totalTrades) * 100).toFixed(1)
+      : '0.0';
+
+    let msg = `<b>⚡ Scalp Strategy</b>\n\n`;
+    msg += `Status: ${status === 'running' ? '🟢 Running' : status === 'paused' ? '⏸ Paused' : '⏹ Stopped'}\n`;
+    const pnl = perf.totalPnl.toNumber();
+    msg += `PnL: <b>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</b>\n`;
+    msg += `Trades: ${perf.totalTrades} (W:${perf.winningTrades} L:${perf.losingTrades}) ${winRate}%\n`;
+    msg += `\n${positions}`;
+
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+  });
+
+  // === /scalpclose <symbol> — Scalp 포지션 강제 청산 ===
+
+  bot.command('scalpclose', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!scalpRef) {
+      await ctx.reply('Scalp strategy not active.');
+      return;
+    }
+
+    const symbol = ctx.message?.text?.replace(/^\/scalpclose\s*/, '').trim().toUpperCase();
+    if (!symbol) {
+      await ctx.reply('Usage: /scalpclose &lt;symbol&gt;\nExample: /scalpclose ETH-PERP', { parse_mode: 'HTML' });
+      return;
+    }
+
+    const result = await scalpRef.handleClosePosition(symbol);
+    await ctx.reply(result, { parse_mode: 'HTML' });
+  });
+
   // === /help ===
 
   bot.command('help', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     await ctx.reply(
       '<b>pangjibot Commands</b>\n\n'
+      + '<b>General</b>\n'
       + '/balance - Account balance &amp; positions\n'
       + '/status - Latest LLM analysis result\n'
       + '/score - Latest scorer metrics\n'
       + '/do &lt;command&gt; - Talk to LLM (trade, ask, transfer, etc)\n'
       + '/prompt - Manage LLM system prompts\n'
       + '/dashboard - Web dashboard link\n'
-      + '/help - This message',
+      + '\n<b>Scalp</b>\n'
+      + '/scalp - Scalp positions &amp; status\n'
+      + '/scalpclose &lt;symbol&gt; - Force close a scalp position\n'
+      + '\n/help - This message',
       { parse_mode: 'HTML' }
     );
   });

@@ -347,11 +347,12 @@ tradebot/
 │   │   ├── risk-manager.ts           # Drawdown/position limits
 │   │   ├── trading-tools.ts          # LLM tool-use (get_balance, market_open, etc.)
 │   │   ├── types.ts                  # All shared types
+│   │   ├── prompt-manager.ts         # Prompt override manager (DB-backed)
 │   │   └── skills/
-│   │       ├── index.ts              # SkillPipeline orchestrator
-│   │       ├── code-skills.ts        # 4 code skills (context/signal/external/risk)
-│   │       ├── llm-decide.ts         # LLM skills (decide/critique/regime)
-│   │       └── types.ts              # Skill types (CritiqueResult, etc.)
+│   │       ├── index.ts              # SkillPipeline orchestrator (urgent/comprehensive/position/review)
+│   │       ├── code-skills.ts        # 10 code skills (see below)
+│   │       ├── llm-decide.ts         # 8 LLM skills (see below)
+│   │       └── types.ts              # Skill types (20+ interfaces)
 │   ├── exchanges/
 │   │   └── hyperliquid/
 │   │       ├── client.ts             # HL REST + WS adapter (singleton)
@@ -386,6 +387,61 @@ tradebot/
 ├── ecosystem.config.cjs              # PM2 설정
 ├── package.json
 └── tsconfig.json
+```
+
+---
+
+## Skill Pipeline (src/core/skills/)
+
+SkillPipeline은 코드 스킬(동기, 결정론적)과 LLM 스킬(비동기, AI)을 오케스트레이션한다.
+
+### Code Skills (code-skills.ts) — 10개
+
+| # | 함수 | 역할 | 입력 |
+|---|------|------|------|
+| 1 | `assessContext` | Brain 현재 상태 요약 (regime/direction/risk) | MarketState |
+| 2 | `readSignals` | 트리거 스코어 플래그 파싱, 방향/품질 판단 | TriggerScore, InfoSignals |
+| 3 | `checkExternal` | 외부 인텔 심볼별 필터, 확신도 modifier 계산 | InfoSignals, symbol, direction |
+| 4 | `assessRisk` | 자본/드로다운/포지션수/연손 체크 | balance, positions, losses |
+| 5 | `checkLiquidity` | L2 호가창으로 슬리피지/스프레드 추정 | l2Book, symbol, notional |
+| 6 | `assessPortfolioCorrelation` | 크로스 포지션 상관계수, 실효 레버리지 계산 | positions, proposedSymbol |
+| 7 | `readOrderflow` | 최근 체결 buy/sell 불균형, 대량주문 감지 | recentFills, symbol |
+| 8 | `assessTimeframeConfluence` | 15m/1h/4h/1d 멀티타임프레임 방향 일치도 | snapshots, candles |
+| 9 | `injectLessons` | DB에서 과거 트레이드 교훈 조회 | symbol, direction |
+| 10 | `trackNarrativeEvolution` | 내러티브(Polymarket/TVL/트렌딩) 추세 변화 추적 | InfoSignals |
+
+### LLM Skills (llm-decide.ts) — 9개
+
+| # | 함수 | 역할 | 호출 시점 |
+|---|------|------|----------|
+| 1 | `decideTrade` | 트레이드 진입 판단 (JSON 제안) | 긴급 트리거 (score 8+) |
+| 2 | `critiqueTrade` | 제안된 트레이드 adversarial 리뷰 | decideTrade 후 |
+| 3 | `applyCritique` | critique 결과를 proposal에 머지 (코드) | critique 후 |
+| 4 | `assessRegime` | 종합 시장 레짐 판단 + 전략 directive 설정 | 30분 종합 (외부 시그널 없을 때) |
+| 5 | `assessRegimeTechnical` | TA 관점 레짐 평가 (듀얼 모드) | 30분 종합 (외부 시그널 있을 때) |
+| 6 | `assessRegimeMacro` | 매크로/내러티브 관점 레짐 평가 | 30분 종합 (외부 시그널 있을 때) |
+| 7 | `managePosition` | 오픈 포지션 동적 관리 (trail/partial close/BE) | 5분 스캔 (포지션 있을 때) |
+| 8 | `reviewTrade` | 클로즈 후 트레이드 리뷰, 교훈 DB 저장 | 포지션 클로즈 후 |
+| 9 | `planScenarios` | Bull/Base/Bear 3개 시나리오 모델링 | 높은 확신도 트레이드 전 |
+
+### Pipeline 흐름
+
+```
+[Urgent (5분)]
+  10 code skills (병렬) → risk/liquidity/correlation early exit
+  → decideTrade (LLM) → planScenarios (LLM, 고확신만) → critiqueTrade (LLM) → proposal
+
+[Comprehensive (30분)]
+  assessContext + assessRisk + trackNarrativeEvolution (code)
+  → 외부 시그널 유무에 따라:
+    있으면: assessRegimeTechnical + assessRegimeMacro (병렬 LLM) → mergeRegimeAssessments
+    없으면: assessRegime (단일 LLM)
+
+[Position Management (5분)]
+  오픈 포지션 있고 |R| > 0.5 → managePosition (LLM per position)
+
+[Post-Trade]
+  포지션 클로즈 → reviewTrade (LLM) → 교훈 DB 저장
 ```
 
 ---

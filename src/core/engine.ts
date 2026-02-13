@@ -8,6 +8,7 @@ import { initTelegram, sendAlert, sendTradeAlert, stopTelegram } from '../monito
 import { getDb, closeDb } from '../data/storage.js';
 import { promptManager } from './prompt-manager.js';
 import type { Strategy } from '../strategies/base.js';
+import type { ScalpStrategy } from '../strategies/scalp/index.js';
 import type { EngineStatus, BrainConfig, TradeProposal, MarketSnapshot, StrategyPositionSummary } from './types.js';
 
 const log = createChildLogger('engine');
@@ -89,6 +90,7 @@ export class TradingEngine {
     // Start all strategies with v3 capital allocation based on actual balance
     const capitalPctMap: Record<string, number> = {
       discretionary: config.discretionaryCapitalPct,
+      scalp: config.scalpCapitalPct,
       momentum: config.momentumCapitalPct,
       'equity-cross': config.equityCrossCapitalPct,
     };
@@ -129,6 +131,14 @@ export class TradingEngine {
       }
     });
 
+    // Wire Brain → Scalp: scalp proposals go to ScalpStrategy for auto-execution
+    this.brain.on('scalpProposal', (proposal: TradeProposal, snapshot?: MarketSnapshot) => {
+      const scalp = this.strategies.get('scalp') as ScalpStrategy | undefined;
+      if (scalp) {
+        scalp.receiveProposal(proposal, snapshot);
+      }
+    });
+
     this.brain.on('alert', (msg: string) => {
       sendAlert(msg).catch(err => {
         log.error({ err }, 'Failed to send Brain alert');
@@ -143,6 +153,18 @@ export class TradingEngine {
           sendAlert(msg).catch(() => {});
         }).catch(err => {
           log.error({ err }, 'Error handling position management action');
+        });
+      }
+    });
+
+    // Wire scalp position management events from Brain
+    this.brain.on('scalpPositionManagement', (action: { symbol: string; action: string; newStopLoss?: number; partialClosePct?: number; reasoning: string }) => {
+      const scalp = this.strategies.get('scalp') as ScalpStrategy | undefined;
+      if (scalp) {
+        scalp.handlePositionManagement(action as import('./skills/types.js').PositionManagementAction).then(msg => {
+          sendAlert(msg).catch(() => {});
+        }).catch(err => {
+          log.error({ err }, 'Error handling scalp position management action');
         });
       }
     });
@@ -170,6 +192,35 @@ export class TradingEngine {
           }
         } catch (err) {
           log.debug({ err }, 'Trade review failed');
+        }
+      };
+    }
+
+    // Wire trade review + message callbacks on scalp position close
+    const scalpStrategy = this.strategies.get('scalp') as ScalpStrategy | undefined;
+    if (scalpStrategy) {
+      scalpStrategy.onMessage = async (msg: string) => {
+        await sendAlert(msg);
+      };
+      scalpStrategy.onTradeClose = async (position, closePrice, pnl) => {
+        try {
+          const pipeline = this.brain.getSkillPipeline();
+          const review = await pipeline.runTradeReview(
+            position, closePrice, pnl, this.brain.getState().regime,
+          );
+          if (review) {
+            const icon = review.outcome === 'win' ? '✅' : review.outcome === 'loss' ? '❌' : '➖';
+            const msg = [
+              `<b>${icon} Scalp Review: ${position.symbol}</b>`,
+              `Outcome: ${review.outcome.toUpperCase()} (${review.pnlPct.toFixed(2)}%)`,
+              review.whatWorked.length > 0 ? `Worked: ${review.whatWorked.join(', ')}` : '',
+              review.whatFailed.length > 0 ? `Failed: ${review.whatFailed.join(', ')}` : '',
+              `<b>Lesson:</b> ${review.lesson}`,
+            ].filter(Boolean).join('\n');
+            await sendAlert(msg);
+          }
+        } catch (err) {
+          log.debug({ err }, 'Scalp trade review failed');
         }
       };
     }
