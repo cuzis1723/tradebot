@@ -315,6 +315,35 @@ function apiEquity(_req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
+function apiCandles(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const symbol = url.searchParams.get('symbol');
+  if (!symbol) { json(res, { error: 'symbol required' }, 400); return; }
+
+  const interval = url.searchParams.get('interval') || '1h';
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10), 500);
+
+  const intervalMs: Record<string, number> = { '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000 };
+  const endTime = Date.now();
+  const startTime = endTime - (intervalMs[interval] || 3_600_000) * limit;
+
+  const hl = getHyperliquidClient();
+  hl.getCandleSnapshot(symbol, interval, startTime, endTime)
+    .then(candles => {
+      json(res, (candles as Array<{ t: number; o: string; h: string; l: string; c: string }>).map(c => ({
+        time: Math.floor(c.t / 1000),
+        open: parseFloat(c.o),
+        high: parseFloat(c.h),
+        low: parseFloat(c.l),
+        close: parseFloat(c.c),
+      })));
+    })
+    .catch(err => {
+      log.warn({ err, symbol, interval }, 'Dashboard: candles fetch failed');
+      json(res, [], 500);
+    });
+}
+
 function apiReportsList(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '30', 10));
@@ -375,6 +404,7 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/fills': apiFills,
   '/api/equity': apiEquity,
   '/api/reports': apiReportsList,
+  '/api/candles': apiCandles,
 };
 
 /** CRIT-9: Validate API key for /api/* routes if DASHBOARD_API_KEY is set */

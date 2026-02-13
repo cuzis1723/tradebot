@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pangjibot Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
 :root {
@@ -113,6 +114,14 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .pos-pnl.red { color: var(--red); }
 .pos-meta { font-size: 11px; color: var(--text3); }
 .pos-empty { text-align: center; color: var(--text3); padding: 20px; font-size: 13px; }
+
+/* Position candlestick charts */
+.pos-charts-grid { display: flex; flex-direction: column; gap: 12px; }
+.pos-chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.pos-chart-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.pos-chart-symbol { font-weight: 700; font-size: 13px; }
+.pos-chart-price { font-size: 12px; color: var(--text2); }
+.pos-chart-container { height: 280px; }
 
 /* Position section layout with pie chart */
 .pos-layout { display: flex; gap: 16px; }
@@ -233,6 +242,19 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       </div>
       <div class="pos-chart-wrap"><canvas id="pieChart"></canvas></div>
     </div>
+  </div>
+
+  <!-- Position Charts -->
+  <div class="section" id="posChartsSection" style="display:none">
+    <div class="section-header">
+      <div class="section-title">Position Charts</div>
+      <div class="chart-toggle-group" id="candleIntervalTabs">
+        <button class="chart-tab" data-interval="15m">15m</button>
+        <button class="chart-tab active" data-interval="1h">1H</button>
+        <button class="chart-tab" data-interval="4h">4H</button>
+      </div>
+    </div>
+    <div id="posCharts" class="pos-charts-grid"></div>
   </div>
 
   <!-- Analysis Timeline -->
@@ -858,6 +880,108 @@ async function toggleReport(el, id) {
   el.classList.add('expanded');
 }
 
+// ── Position Candlestick Charts ──
+let candleInterval = '1h';
+let posChartInstances = {}; // symbol -> { chart, candleSeries, card }
+let lastPositions = null;
+
+document.querySelectorAll('#candleIntervalTabs .chart-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#candleIntervalTabs .chart-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    candleInterval = tab.dataset.interval;
+    // Clear existing charts and re-render with new interval
+    Object.values(posChartInstances).forEach(inst => inst.chart.remove());
+    posChartInstances = {};
+    $('posCharts').innerHTML = '';
+    refreshPositionCharts(lastPositions);
+  });
+});
+
+async function refreshPositionCharts(positions) {
+  const section = $('posChartsSection');
+  const container = $('posCharts');
+
+  if (!positions || positions.length === 0) {
+    section.style.display = 'none';
+    Object.values(posChartInstances).forEach(inst => inst.chart.remove());
+    posChartInstances = {};
+    container.innerHTML = '';
+    return;
+  }
+
+  section.style.display = '';
+  const currentSymbols = new Set(positions.map(p => p.symbol.includes('-PERP') ? p.symbol : p.symbol + '-PERP'));
+
+  // Remove charts for closed positions
+  for (const sym of Object.keys(posChartInstances)) {
+    if (!currentSymbols.has(sym)) {
+      posChartInstances[sym].card.remove();
+      posChartInstances[sym].chart.remove();
+      delete posChartInstances[sym];
+    }
+  }
+
+  for (const pos of positions) {
+    const symbol = pos.symbol.includes('-PERP') ? pos.symbol : pos.symbol + '-PERP';
+    await renderPositionChart(symbol, pos);
+  }
+}
+
+async function renderPositionChart(symbol, pos) {
+  const candles = await fetchJson('/api/candles?symbol=' + encodeURIComponent(symbol) + '&interval=' + candleInterval + '&limit=200');
+  if (!candles || candles.length === 0) return;
+
+  let inst = posChartInstances[symbol];
+
+  if (!inst) {
+    const container = $('posCharts');
+    const card = document.createElement('div');
+    card.className = 'pos-chart-card';
+    card.innerHTML = '<div class="pos-chart-header">' +
+      '<span class="pos-chart-symbol">' + symbol + ' <span class="pos-side ' + pos.side + '">' + pos.side.toUpperCase() + '</span></span>' +
+      '<span class="pos-chart-price">Entry: ' + fmtUsdPlain(pos.entryPrice) + '</span>' +
+      '</div>' +
+      '<div class="pos-chart-container"></div>';
+    container.appendChild(card);
+
+    const chartContainer = card.querySelector('.pos-chart-container');
+    const chart = LightweightCharts.createChart(chartContainer, {
+      layout: { background: { color: '#0d1320' }, textColor: '#7a8ba8' },
+      grid: { vertLines: { color: '#1c2a42' }, horzLines: { color: '#1c2a42' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#1c2a42' },
+      timeScale: { borderColor: '#1c2a42', timeVisible: true },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#10b981', downColor: '#ef4444',
+      borderUpColor: '#10b981', borderDownColor: '#ef4444',
+      wickUpColor: '#10b981', wickDownColor: '#ef4444',
+    });
+
+    inst = { chart, candleSeries, card };
+    posChartInstances[symbol] = inst;
+
+    new ResizeObserver(() => chart.applyOptions({ width: chartContainer.clientWidth }))
+      .observe(chartContainer);
+  }
+
+  inst.candleSeries.setData(candles);
+
+  // Remove old price lines and add entry line
+  inst.candleSeries.createPriceLine({
+    price: pos.entryPrice,
+    color: '#3b82f6',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed,
+    axisLabelVisible: true,
+    title: 'Entry',
+  });
+
+  inst.chart.timeScale().fitContent();
+}
+
 // ── Main ──
 async function refresh() {
   const [status, equity, balance, portfolio, fills, positions, stats, decisions, reports] = await Promise.all([
@@ -869,6 +993,8 @@ async function refresh() {
   renderAgent(status);
   renderMetrics(equity, balance, fills, stats);
   renderPositions(positions, equity?.equity);
+  lastPositions = positions;
+  refreshPositionCharts(positions);
   renderTimeline(decisions);
   renderReports(reports);
   if (portfolio && portfolio.pnl) { portfolioCache = portfolio; updateChart(); }
