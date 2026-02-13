@@ -354,33 +354,6 @@ Respond with JSON only:
     await ctx.reply(`Unknown subcommand. Use /prompt list, view, edit, reset, or history.`);
   });
 
-  // Handle pending prompt edit confirmation (Y/y/yes)
-  bot.on('message:text', async (ctx: Context) => {
-    if (!isAuthorized(ctx)) return;
-
-    const text = ctx.message?.text?.trim();
-    if (!text) return;
-
-    // Check for pending prompt edit confirmation
-    if (pendingEdit && (text === 'Y' || text === 'y' || text.toLowerCase() === 'yes')) {
-      if (Date.now() > pendingEdit.expiresAt) {
-        pendingEdit = null;
-        await ctx.reply('Edit expired (5min timeout). Run /prompt edit again.');
-        return;
-      }
-
-      promptManager.set(pendingEdit.key, pendingEdit.newText, pendingEdit.summary);
-      await ctx.reply(`Prompt <code>${pendingEdit.key}</code> updated successfully.`, { parse_mode: 'HTML' });
-      pendingEdit = null;
-      return;
-    }
-
-    // Clear expired pending edit
-    if (pendingEdit && Date.now() > pendingEdit.expiresAt) {
-      pendingEdit = null;
-    }
-  });
-
   // === /scalp — Scalp 포지션 & 상태 ===
 
   bot.command('scalp', async (ctx: Context) => {
@@ -445,6 +418,35 @@ Respond with JSON only:
       + '\n/help - This message',
       { parse_mode: 'HTML' }
     );
+  });
+
+  // Handle pending prompt edit confirmation (Y/y/yes)
+  // NOTE: must be registered AFTER all bot.command() handlers,
+  // otherwise bot.on('message:text') swallows commands like /help
+  bot.on('message:text', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+
+    const text = ctx.message?.text?.trim();
+    if (!text) return;
+
+    // Check for pending prompt edit confirmation
+    if (pendingEdit && (text === 'Y' || text === 'y' || text.toLowerCase() === 'yes')) {
+      if (Date.now() > pendingEdit.expiresAt) {
+        pendingEdit = null;
+        await ctx.reply('Edit expired (5min timeout). Run /prompt edit again.');
+        return;
+      }
+
+      promptManager.set(pendingEdit.key, pendingEdit.newText, pendingEdit.summary);
+      await ctx.reply(`Prompt <code>${pendingEdit.key}</code> updated successfully.`, { parse_mode: 'HTML' });
+      pendingEdit = null;
+      return;
+    }
+
+    // Clear expired pending edit
+    if (pendingEdit && Date.now() > pendingEdit.expiresAt) {
+      pendingEdit = null;
+    }
   });
 
   // Start the bot
