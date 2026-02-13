@@ -1,10 +1,23 @@
 /**
  * SkillPipeline — Orchestrates code skills and LLM skills.
  *
- * Urgent flow:  4 code skills (parallel) → 1 LLM decideTrade
+ * Urgent flow:  10 code skills (parallel) → 1 LLM decideTrade → critique → optional scenarios
  * Comprehensive: code skills compress context → 1 LLM assessRegime
+ * Position management: per-position LLM managePosition calls
+ * Post-trade: LLM reviewTrade call
  */
-import { assessContext, readSignals, checkExternal, assessRisk } from './code-skills.js';
+import {
+  assessContext,
+  readSignals,
+  checkExternal,
+  assessRisk,
+  checkLiquidity,
+  assessPortfolioCorrelation,
+  readOrderflow,
+  assessTimeframeConfluence,
+  injectLessons,
+  trackNarrativeEvolution,
+} from './code-skills.js';
 import {
   decideTrade,
   assessRegime,
@@ -13,6 +26,9 @@ import {
   assessRegimeTechnical,
   assessRegimeMacro,
   mergeRegimeAssessments,
+  managePosition,
+  reviewTrade,
+  planScenarios,
 } from './llm-decide.js';
 import { logSkillExecution } from '../../data/storage.js';
 import { createChildLogger } from '../../monitoring/logger.js';
@@ -26,7 +42,7 @@ import type {
   ActiveDiscretionaryPosition,
   TradeProposal,
 } from '../types.js';
-import type { DecisionContext } from './types.js';
+import type { DecisionContext, PositionManagementAction, TradeReviewResult, ScenarioAnalysis } from './types.js';
 
 const log = createChildLogger('skill-pipeline');
 
@@ -39,9 +55,11 @@ export class SkillPipeline {
 
   /**
    * Run the urgent decision pipeline.
-   * Phase 1: 4 code skills in parallel (<10ms)
+   * Phase 1: 10 code skills in parallel (<10ms for pure code, async for L2/fills)
    * Phase 2: Early exit if risk check fails
-   * Phase 3: Single LLM decideTrade call
+   * Phase 3: Single LLM decideTrade call (with enhanced context)
+   * Phase 4: Optional scenario planning (high confidence trades only)
+   * Phase 5: Critique (adversarial review)
    */
   async runUrgentDecision(
     triggerScore: TriggerScore,
@@ -51,22 +69,59 @@ export class SkillPipeline {
     positions: ActiveDiscretionaryPosition[],
     balance: number,
     consecutiveLosses: number = 0,
-  ): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {
+    l2Book?: { bids: Array<{ px: string; sz: string }>; asks: Array<{ px: string; sz: string }> } | null,
+    recentFills?: Array<{ side: string; px: string; sz: string; time: number }> | null,
+    candles4h?: Array<{ close: number; open: number }> | null,
+    candles15m?: Array<{ close: number; open: number }> | null,
+  ): Promise<{ action: string; proposal?: TradeProposal; content?: string; scenarioAnalysis?: ScenarioAnalysis }> {
     const startMs = Date.now();
+    const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
 
-    // Phase 1: Code skills (parallel)
-    const [contextResult, signalResult, externalResult, riskResult] = [
-      assessContext(brainState),
-      readSignals(triggerScore, infoSignals),
-      checkExternal(infoSignals, triggerScore.symbol, triggerScore.directionBias),
-      assessRisk(balance, positions, consecutiveLosses),
-    ];
+    // Phase 1: All code skills (parallel — synchronous ones are instant)
+    const contextResult = assessContext(brainState);
+    const signalResult = readSignals(triggerScore, infoSignals);
+    const externalResult = checkExternal(infoSignals, triggerScore.symbol, triggerScore.directionBias);
+    const riskResult = assessRisk(balance, positions, consecutiveLosses);
+
+    // New enhanced code skills
+    const estimatedNotional = balance * 0.55 * 0.15 * (triggerScore.totalScore >= 11 ? 8 : 5); // rough estimate
+    const liquidityResult = checkLiquidity(
+      l2Book ?? null,
+      triggerScore.symbol,
+      estimatedNotional,
+      triggerScore.directionBias === 'long' ? 'buy' : 'sell',
+    );
+    const correlationResult = assessPortfolioCorrelation(
+      positions,
+      triggerScore.symbol,
+      triggerScore.directionBias === 'long' ? 'buy' : 'sell',
+      triggerScore.totalScore >= 11 ? 8 : 5,
+    );
+    const orderflowResult = readOrderflow(
+      recentFills ?? null,
+      triggerScore.symbol,
+      targetSnapshot?.price ?? 0,
+    );
+    const confluenceResult = assessTimeframeConfluence(
+      targetSnapshot ?? null,
+      candles4h ?? null,
+      candles15m ?? null,
+      triggerScore.symbol,
+    );
+    const lessonsResult = injectLessons(triggerScore.symbol, triggerScore.directionBias);
+    const narrativeResult = trackNarrativeEvolution(infoSignals);
 
     const decisionCtx: DecisionContext = {
       context: contextResult,
       signal: signalResult,
       external: externalResult,
       risk: riskResult,
+      liquidity: liquidityResult,
+      portfolioCorrelation: correlationResult,
+      orderflow: orderflowResult,
+      timeframeConfluence: confluenceResult,
+      lessons: lessonsResult,
+      narrativeEvolution: narrativeResult,
     };
 
     log.info({
@@ -76,22 +131,62 @@ export class SkillPipeline {
       signal: signalResult.summary,
       external: externalResult.summary,
       risk: riskResult.summary,
-    }, 'Skill pipeline: code skills complete');
+      liquidity: liquidityResult.summary,
+      correlation: correlationResult.summary,
+      orderflow: orderflowResult.summary,
+      confluence: confluenceResult.summary,
+      lessons: lessonsResult.summary,
+      narratives: narrativeResult.summary,
+    }, 'Skill pipeline: all code skills complete');
 
     // Phase 2: Early exit if risk check fails
     if (!riskResult.data.canTrade) {
       const content = `Risk check failed: ${riskResult.data.warnings.join(', ')}`;
       log.info({ symbol: triggerScore.symbol, reason: content }, 'Skill pipeline: early exit — risk');
-
       this.logExecution('urgent', triggerScore.symbol, decisionCtx, 'no_trade', 0, 0, Date.now() - startMs);
       return { action: 'no_trade', content };
     }
 
-    // Phase 3: LLM decideTrade call (Proposer)
-    const targetSnapshot = snapshots.find(s => s.symbol === triggerScore.symbol);
+    // Early exit: liquidity abort
+    if (liquidityResult.data.sizeRecommendation === 'abort') {
+      const content = `Liquidity check failed: ${liquidityResult.data.liquidityWarning}`;
+      log.info({ symbol: triggerScore.symbol, reason: content }, 'Skill pipeline: early exit — liquidity');
+      this.logExecution('urgent', triggerScore.symbol, decisionCtx, 'no_trade', 0, 0, Date.now() - startMs);
+      return { action: 'no_trade', content };
+    }
+
+    // Early exit: correlation danger
+    if (correlationResult.data.correlationWarning?.startsWith('DANGER')) {
+      const content = `Portfolio correlation check failed: ${correlationResult.data.correlationWarning}`;
+      log.info({ symbol: triggerScore.symbol, reason: content }, 'Skill pipeline: early exit — correlation');
+      this.logExecution('urgent', triggerScore.symbol, decisionCtx, 'no_trade', 0, 0, Date.now() - startMs);
+      return { action: 'no_trade', content };
+    }
+
+    // Phase 3: LLM decideTrade call (with enhanced context injected into prompt)
     const result = await decideTrade(this.advisor, decisionCtx, targetSnapshot);
 
-    // Phase 4: Critique (only if trade proposed — no extra cost on no_trade)
+    // Phase 4: Scenario planning (only for high confidence proposals)
+    let scenarioAnalysis: ScenarioAnalysis | null = null;
+    if (result.action === 'propose_trade' && result.proposal) {
+      const isHighConviction = triggerScore.totalScore >= 11 ||
+        result.proposal.confidence === 'high' ||
+        (result.proposal.confidence as string) === 'highest';
+
+      if (isHighConviction) {
+        log.info({ symbol: triggerScore.symbol }, 'Skill pipeline: running scenario analysis on high-conviction trade');
+        scenarioAnalysis = await planScenarios(this.advisor, result.proposal, decisionCtx, targetSnapshot);
+
+        if (scenarioAnalysis && !scenarioAnalysis.worstCaseAcceptable) {
+          log.info({ symbol: triggerScore.symbol, assessment: scenarioAnalysis.overallAssessment }, 'Scenario analysis: worst case unacceptable');
+          // Don't abort, but reduce leverage
+          result.proposal.leverage = Math.max(3, Math.floor(result.proposal.leverage * 0.6));
+          result.proposal.size = Math.min(result.proposal.size, 0.10);
+        }
+      }
+    }
+
+    // Phase 5: Critique (only if trade proposed)
     if (result.action === 'propose_trade' && result.proposal) {
       log.info({ symbol: triggerScore.symbol }, 'Skill pipeline: running critique on proposal');
       const critique = await critiqueTrade(this.advisor, decisionCtx, result.proposal, targetSnapshot);
@@ -108,9 +203,8 @@ export class SkillPipeline {
         }, 'Skill pipeline: decision complete (with critique)');
 
         this.logExecution('urgent', triggerScore.symbol, decisionCtx, finalResult.action, 0, 0, durationMs);
-        return finalResult;
+        return { ...finalResult, scenarioAnalysis: scenarioAnalysis ?? undefined };
       }
-      // Critique failed (null) — fall through with original proposal
       log.warn({ symbol: triggerScore.symbol }, 'Critique call failed, using original proposal');
     }
 
@@ -123,12 +217,13 @@ export class SkillPipeline {
 
     this.logExecution('urgent', triggerScore.symbol, decisionCtx, result.action, 0, 0, durationMs);
 
-    return result;
+    return { ...result, scenarioAnalysis: scenarioAnalysis ?? undefined };
   }
 
   /**
    * Run the comprehensive assessment pipeline.
    * Compresses all data via code skills → single LLM assessRegime call.
+   * Now includes narrative evolution tracking.
    */
   async runComprehensiveAssessment(
     snapshots: MarketSnapshot[],
@@ -144,6 +239,9 @@ export class SkillPipeline {
     // Build compressed context from code skills
     const contextResult = assessContext(brainState);
     const riskResult = assessRisk(balance, positions, consecutiveLosses);
+
+    // Track narrative evolution
+    const narrativeResult = trackNarrativeEvolution(infoSignals);
 
     // Signal summaries for all notable symbols (score >= 3)
     const notableScores = scores.filter(s => s.totalScore >= 3);
@@ -180,6 +278,9 @@ export class SkillPipeline {
       ? positions.map(p => `${p.symbol} ${p.side} @${p.entryPrice} SL:${p.stopLoss} TP:${p.takeProfit}`).join('; ')
       : 'No open positions';
 
+    // Portfolio correlation summary
+    const correlationResult = assessPortfolioCorrelation(positions);
+
     const hasExternalSignals = externalParts.length > 0;
 
     // Dual perspective: when external signals exist, run TA and Macro in parallel
@@ -197,6 +298,7 @@ export class SkillPipeline {
         `=== RISK & POSITIONS ===`,
         riskResult.summary,
         positionSummary,
+        correlationResult.hasSignal ? `\n=== PORTFOLIO CORRELATION ===\n${correlationResult.summary}` : '',
         ``,
         `=== TASK ===`,
         `Assess market regime using ONLY technical analysis.`,
@@ -210,6 +312,7 @@ export class SkillPipeline {
         `=== EXTERNAL INTELLIGENCE ===`,
         externalParts.join('\n'),
         ``,
+        narrativeResult.hasSignal ? `=== NARRATIVE TRENDS ===\n${narrativeResult.summary}\n` : '',
         `=== MARKET DATA (brief) ===`,
         JSON.stringify(marketData.map(s => ({ symbol: s.symbol, price: s.price, change_24h: s.change_24h, trend: s.trend })), null, 2),
         ``,
@@ -258,6 +361,7 @@ export class SkillPipeline {
       `=== RISK & POSITIONS ===`,
       riskResult.summary,
       positionSummary,
+      correlationResult.hasSignal ? `\n=== PORTFOLIO CORRELATION ===\n${correlationResult.summary}` : '',
       ``,
       `=== TASK ===`,
       `Assess market regime, direction, and risk level.`,
@@ -271,6 +375,65 @@ export class SkillPipeline {
     log.info({ durationMs, regime: response?.regime, dual: false }, 'Skill pipeline: comprehensive complete');
 
     return response;
+  }
+
+  /**
+   * Run position management for all open positions.
+   * Called periodically (every 5-min scan) when positions exist.
+   * Returns management actions for positions that need changes.
+   */
+  async runPositionManagement(
+    positions: ActiveDiscretionaryPosition[],
+    snapshots: MarketSnapshot[],
+    regime: string,
+    direction: string,
+  ): Promise<PositionManagementAction[]> {
+    if (positions.length === 0) return [];
+    if (!this.advisor.isAvailable()) return [];
+
+    const actions: PositionManagementAction[] = [];
+
+    for (const pos of positions) {
+      const snapshot = snapshots.find(s => s.symbol === pos.symbol);
+      if (!snapshot) continue;
+
+      // Quick code-level checks before LLM call
+      const currentPrice = snapshot.price;
+      const riskDistance = Math.abs(pos.entryPrice - pos.stopLoss);
+      const unrealizedPnl = (currentPrice - pos.entryPrice) * pos.size * (pos.side === 'buy' ? 1 : -1);
+      const currentR = riskDistance > 0 ? unrealizedPnl / (riskDistance * pos.size) : 0;
+
+      // Skip LLM call if position is comfortably within -0.5R to +0.5R (no action needed)
+      if (Math.abs(currentR) < 0.5) continue;
+
+      const action = await managePosition(this.advisor, pos, snapshot, regime, direction);
+      if (action && action.action !== 'hold') {
+        actions.push(action);
+      }
+    }
+
+    if (actions.length > 0) {
+      log.info({ count: actions.length, actions: actions.map(a => `${a.symbol}:${a.action}`) }, 'Position management actions');
+    }
+
+    return actions;
+  }
+
+  /**
+   * Run post-trade review after a position is closed.
+   * Analyzes what worked and what didn't, persists lessons to DB.
+   */
+  async runTradeReview(
+    position: ActiveDiscretionaryPosition,
+    closePrice: number,
+    pnl: number,
+    regime: string,
+    entryContext?: string,
+  ): Promise<TradeReviewResult | null> {
+    if (!this.advisor.isAvailable()) return null;
+
+    log.info({ symbol: position.symbol, pnl: pnl.toFixed(2) }, 'Running trade review');
+    return await reviewTrade(this.advisor, position, closePrice, pnl, entryContext ?? null, regime);
   }
 
   private logExecution(
@@ -302,6 +465,20 @@ export class SkillPipeline {
 }
 
 // Re-export skills for direct use
-export { assessContext, readSignals, checkExternal, assessRisk } from './code-skills.js';
-export { decideTrade, assessRegime, critiqueTrade, applyCritique, assessRegimeTechnical, assessRegimeMacro, mergeRegimeAssessments } from './llm-decide.js';
-export type { SkillResult, DecisionContext, ContextAssessment, SignalReading, ExternalIntelAssessment, RiskAssessment, CritiqueResult } from './types.js';
+export {
+  assessContext, readSignals, checkExternal, assessRisk,
+  checkLiquidity, assessPortfolioCorrelation, readOrderflow,
+  assessTimeframeConfluence, injectLessons, trackNarrativeEvolution,
+} from './code-skills.js';
+export {
+  decideTrade, assessRegime, critiqueTrade, applyCritique,
+  assessRegimeTechnical, assessRegimeMacro, mergeRegimeAssessments,
+  managePosition, reviewTrade, planScenarios, buildEnhancedPromptSections,
+} from './llm-decide.js';
+export type {
+  SkillResult, DecisionContext, ContextAssessment, SignalReading,
+  ExternalIntelAssessment, RiskAssessment, CritiqueResult,
+  LiquidityAssessment, PortfolioCorrelationAssessment, OrderflowReading,
+  TimeframeConfluence, LessonsContext, NarrativeEvolution,
+  TradeReviewResult, PositionManagementAction, ScenarioAnalysis,
+} from './types.js';

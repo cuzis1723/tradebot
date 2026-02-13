@@ -67,10 +67,119 @@ export interface CritiqueResult {
   reasoning: string;
 }
 
+/** Output of checkLiquidity code skill */
+export interface LiquidityAssessment {
+  symbol: string;
+  bidDepthUsd: number;
+  askDepthUsd: number;
+  spreadPct: number;
+  estimatedSlippagePct: number;
+  liquidityWarning: string | null;
+  sizeRecommendation: 'full' | 'reduce' | 'abort';
+}
+
+/** Output of assessPortfolioCorrelation code skill */
+export interface PortfolioCorrelationAssessment {
+  positionCount: number;
+  effectiveLeverage: number;
+  correlatedPairs: Array<{ symbols: [string, string]; correlation: number }>;
+  correlationWarning: string | null;
+  maxAdditionalLeverage: number;
+}
+
+/** Output of readOrderflow code skill */
+export interface OrderflowReading {
+  symbol: string;
+  buyVolumePct: number;
+  sellVolumePct: number;
+  imbalance: 'buy_heavy' | 'sell_heavy' | 'balanced';
+  largeOrderCount: number;
+  tradeFrequencyRatio: number;
+  smartMoneySignal: string | null;
+}
+
+/** Output of assessTimeframeConfluence code skill */
+export interface TimeframeConfluence {
+  symbol: string;
+  timeframes: Record<string, 'bullish' | 'bearish' | 'neutral'>;
+  alignedCount: number;
+  totalTimeframes: number;
+  confluenceScore: number;
+  confluenceLabel: 'strong' | 'moderate' | 'weak' | 'conflicting';
+}
+
+/** Output of injectLessons code skill */
+export interface LessonsContext {
+  relevantLessons: Array<{
+    symbol: string;
+    direction: string;
+    outcome: string;
+    lesson: string;
+    timestamp: number;
+  }>;
+  winRateSimilar: number;
+  avgRRSimilar: number;
+  totalSimilarTrades: number;
+}
+
+/** Output of trackNarrativeEvolution code skill */
+export interface NarrativeEvolution {
+  narratives: Array<{
+    source: string;
+    name: string;
+    trend: 'strengthening' | 'weakening' | 'stable' | 'new';
+    currentValue: number;
+    previousValue: number;
+    changeRate: number;
+    detail: string;
+  }>;
+  dominantNarrative: string | null;
+}
+
+/** Output of reviewTrade LLM skill */
+export interface TradeReviewResult {
+  outcome: 'win' | 'loss' | 'breakeven';
+  pnlPct: number;
+  whatWorked: string[];
+  whatFailed: string[];
+  signalAccuracy: Array<{ signal: string; accurate: boolean }>;
+  lesson: string;
+  improvementSuggestion: string;
+}
+
+/** Output of managePosition LLM skill */
+export interface PositionManagementAction {
+  symbol: string;
+  action: 'hold' | 'trail_stop' | 'partial_close' | 'move_to_breakeven' | 'close_now';
+  newStopLoss?: number;
+  partialClosePct?: number;
+  reasoning: string;
+}
+
+/** Output of planScenarios LLM skill */
+export interface ScenarioAnalysis {
+  scenarios: Array<{
+    name: string;
+    probability: number;
+    priceTarget: number;
+    positionOutcome: string;
+    pnlEstimate: number;
+  }>;
+  worstCaseAcceptable: boolean;
+  overallAssessment: string;
+}
+
 /** Combined context passed to the LLM decideTrade skill */
 export interface DecisionContext {
   context: SkillResult<ContextAssessment>;
   signal: SkillResult<SignalReading>;
   external: SkillResult<ExternalIntelAssessment>;
   risk: SkillResult<RiskAssessment>;
+  /** New enhanced skills (optional for backward compatibility) */
+  liquidity?: SkillResult<LiquidityAssessment>;
+  portfolioCorrelation?: SkillResult<PortfolioCorrelationAssessment>;
+  orderflow?: SkillResult<OrderflowReading>;
+  timeframeConfluence?: SkillResult<TimeframeConfluence>;
+  lessons?: SkillResult<LessonsContext>;
+  narrativeEvolution?: SkillResult<NarrativeEvolution>;
 }

@@ -165,6 +165,46 @@ function initSchema(database: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_signal_accuracy_source_timestamp ON signal_accuracy(source, timestamp);
+
+    CREATE TABLE IF NOT EXISTS trade_lessons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trade_id INTEGER,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      entry_price REAL NOT NULL,
+      close_price REAL NOT NULL,
+      pnl REAL NOT NULL,
+      pnl_pct REAL NOT NULL,
+      leverage INTEGER DEFAULT 3,
+      outcome TEXT NOT NULL,
+      what_worked TEXT,
+      what_failed TEXT,
+      lesson TEXT NOT NULL,
+      signal_accuracy_json TEXT,
+      improvement TEXT,
+      regime TEXT,
+      trigger_score INTEGER,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trade_lessons_symbol ON trade_lessons(symbol);
+    CREATE INDEX IF NOT EXISTS idx_trade_lessons_outcome ON trade_lessons(outcome);
+    CREATE INDEX IF NOT EXISTS idx_trade_lessons_timestamp ON trade_lessons(timestamp);
+
+    CREATE TABLE IF NOT EXISTS narrative_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      name TEXT NOT NULL,
+      value REAL NOT NULL,
+      detail TEXT,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_narrative_history_source_name ON narrative_history(source, name);
+    CREATE INDEX IF NOT EXISTS idx_narrative_history_timestamp ON narrative_history(timestamp);
   `);
 }
 
@@ -430,6 +470,116 @@ export function updateSignalOutcome(
     SET outcome = ?, price_after_1h = ?, price_after_4h = ?
     WHERE id = ?
   `).run(outcome, priceAfter1h ?? null, priceAfter4h ?? null, id);
+}
+
+// ============================================================
+// Trade Lessons
+// ============================================================
+
+export function logTradeLesson(
+  symbol: string,
+  side: string,
+  direction: string,
+  entryPrice: number,
+  closePrice: number,
+  pnl: number,
+  pnlPct: number,
+  leverage: number,
+  outcome: string,
+  whatWorked: string | null,
+  whatFailed: string | null,
+  lesson: string,
+  signalAccuracyJson: string | null,
+  improvement: string | null,
+  regime: string | null,
+  triggerScore: number | null,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO trade_lessons (symbol, side, direction, entry_price, close_price, pnl, pnl_pct, leverage, outcome, what_worked, what_failed, lesson, signal_accuracy_json, improvement, regime, trigger_score, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(symbol, side, direction, entryPrice, closePrice, pnl, pnlPct, leverage, outcome, whatWorked, whatFailed, lesson, signalAccuracyJson, improvement, regime, triggerScore, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function getRecentLessons(limit: number = 10, symbol?: string): Array<{
+  symbol: string; side: string; direction: string; pnl: number; pnl_pct: number;
+  outcome: string; lesson: string; improvement: string | null; regime: string | null;
+  trigger_score: number | null; timestamp: number;
+}> {
+  const database = getDb();
+  if (symbol) {
+    return database.prepare(`
+      SELECT symbol, side, direction, pnl, pnl_pct, outcome, lesson, improvement, regime, trigger_score, timestamp
+      FROM trade_lessons WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?
+    `).all(symbol, limit) as Array<{
+      symbol: string; side: string; direction: string; pnl: number; pnl_pct: number;
+      outcome: string; lesson: string; improvement: string | null; regime: string | null;
+      trigger_score: number | null; timestamp: number;
+    }>;
+  }
+  return database.prepare(`
+    SELECT symbol, side, direction, pnl, pnl_pct, outcome, lesson, improvement, regime, trigger_score, timestamp
+    FROM trade_lessons ORDER BY timestamp DESC LIMIT ?
+  `).all(limit) as Array<{
+    symbol: string; side: string; direction: string; pnl: number; pnl_pct: number;
+    outcome: string; lesson: string; improvement: string | null; regime: string | null;
+    trigger_score: number | null; timestamp: number;
+  }>;
+}
+
+export function getLessonStats(symbol?: string, direction?: string): { wins: number; losses: number; winRate: number; avgPnlPct: number } {
+  const database = getDb();
+  let query = 'SELECT outcome, pnl_pct FROM trade_lessons WHERE 1=1';
+  const params: (string)[] = [];
+  if (symbol) { query += ' AND symbol = ?'; params.push(symbol); }
+  if (direction) { query += ' AND direction = ?'; params.push(direction); }
+  const rows = database.prepare(query).all(...params) as Array<{ outcome: string; pnl_pct: number }>;
+  const wins = rows.filter(r => r.outcome === 'win').length;
+  const losses = rows.filter(r => r.outcome === 'loss').length;
+  const total = rows.length;
+  const avgPnlPct = total > 0 ? rows.reduce((s, r) => s + r.pnl_pct, 0) / total : 0;
+  return { wins, losses, winRate: total > 0 ? wins / total : 0, avgPnlPct };
+}
+
+// ============================================================
+// Narrative History
+// ============================================================
+
+export function logNarrativeSnapshot(
+  source: string,
+  name: string,
+  value: number,
+  detail: string | null,
+): void {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO narrative_history (source, name, value, detail, timestamp)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(source, name, value, detail, Date.now());
+}
+
+export function getNarrativeHistory(source: string, name: string, limit: number = 10): Array<{
+  value: number; detail: string | null; timestamp: number;
+}> {
+  const database = getDb();
+  return database.prepare(`
+    SELECT value, detail, timestamp FROM narrative_history
+    WHERE source = ? AND name = ?
+    ORDER BY timestamp DESC LIMIT ?
+  `).all(source, name, limit) as Array<{ value: number; detail: string | null; timestamp: number }>;
+}
+
+export function getRecentNarratives(hoursBack: number = 2): Array<{
+  source: string; name: string; value: number; detail: string | null; timestamp: number;
+}> {
+  const database = getDb();
+  const since = Date.now() - hoursBack * 3600_000;
+  return database.prepare(`
+    SELECT source, name, value, detail, timestamp FROM narrative_history
+    WHERE timestamp > ?
+    ORDER BY timestamp DESC
+  `).all(since) as Array<{ source: string; name: string; value: number; detail: string | null; timestamp: number }>;
 }
 
 export function closeDb(): void {
