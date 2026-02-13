@@ -14,7 +14,10 @@
   --blue: #3b82f6; --blue2: #2563eb; --blue-glow: rgba(59,130,246,0.25);
   --green: #10b981; --green2: #059669; --green-glow: rgba(16,185,129,0.2);
   --red: #ef4444; --red2: #dc2626; --red-glow: rgba(239,68,68,0.2);
-  --yellow: #f59e0b; --purple: #8b5cf6;
+  --yellow: #f59e0b; --amber: #fbbf24; --amber-glow: rgba(251,191,36,0.15);
+  --purple: #a78bfa; --purple2: #8b5cf6; --purple-glow: rgba(167,139,250,0.2);
+  --teal: #14b8a6; --teal2: #0d9488; --teal-glow: rgba(20,184,166,0.2);
+  --pink: #f472b6; --coral: #fb7185;
   --radius: 14px; --radius-sm: 8px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -25,50 +28,85 @@ body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-s
 /* ── Header ── */
 header { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 20px; }
 .logo { display: flex; align-items: center; gap: 10px; }
-.logo h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+.logo h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; background: linear-gradient(135deg, var(--blue), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green-glow); animation: pulse-dot 2s ease-in-out infinite; }
 .live-dot.off { background: var(--red); box-shadow: 0 0 8px var(--red-glow); }
 @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .header-right { display: flex; align-items: center; gap: 8px; }
-.uptime-badge { font-size: 11px; color: var(--text2); background: var(--card); padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); }
+.uptime-badge { font-size: 11px; color: var(--teal); background: var(--teal-glow); padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(20,184,166,0.2); }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; transition: all 0.15s; }
 .btn:hover { background: var(--card2); border-color: var(--border2); }
-.btn-primary { background: var(--blue); border-color: var(--blue2); color: #fff; }
-.btn-primary:hover { background: var(--blue2); }
+.btn-primary { background: linear-gradient(135deg, var(--blue), var(--purple2)); border-color: var(--purple2); color: #fff; }
+.btn-primary:hover { opacity: 0.9; }
 
 /* ── Agent Card ── */
-.agent-section { background: linear-gradient(135deg, var(--card) 0%, var(--card2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 14px; display: flex; align-items: center; gap: 20px; }
+.agent-section { background: linear-gradient(135deg, var(--card) 0%, #151d30 50%, var(--card2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 14px; display: flex; align-items: center; gap: 24px; position: relative; overflow: hidden; }
+.agent-section::before { content: ''; position: absolute; top: -40px; right: -40px; width: 120px; height: 120px; background: radial-gradient(circle, var(--purple-glow), transparent 70%); pointer-events: none; }
+.agent-section::after { content: ''; position: absolute; bottom: -30px; left: -30px; width: 100px; height: 100px; background: radial-gradient(circle, var(--teal-glow), transparent 70%); pointer-events: none; }
 @media (max-width: 600px) { .agent-section { flex-direction: column; text-align: center; } }
 
-/* Robot character */
-.robot { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; animation: robot-float 3s ease-in-out infinite; }
-@keyframes robot-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-.robot.working { animation: robot-work 0.8s ease-in-out infinite; }
-@keyframes robot-work { 0%,100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-3px) rotate(-2deg); } 75% { transform: translateY(-3px) rotate(2deg); } }
-.robot-antenna { width: 3px; height: 10px; background: var(--text3); margin-bottom: -1px; position: relative; }
-.robot-antenna::after { content: ''; position: absolute; top: -5px; left: 50%; transform: translateX(-50%); width: 8px; height: 8px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue-glow); animation: antenna-pulse 2s ease-in-out infinite; }
-@keyframes antenna-pulse { 0%,100% { box-shadow: 0 0 4px var(--blue-glow); } 50% { box-shadow: 0 0 14px var(--blue), 0 0 24px var(--blue-glow); } }
-.robot-head { width: 56px; height: 46px; background: linear-gradient(180deg, #1a2744, #152036); border: 2px solid var(--border2); border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 14px; position: relative; }
-.robot-eye { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 6px var(--blue-glow); animation: blink 4s ease-in-out infinite; }
+/* ── Kawaii Robot ── */
+.robot { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; animation: robot-float 3s ease-in-out infinite; position: relative; z-index: 1; }
+@keyframes robot-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+.robot.working { animation: robot-work 1s ease-in-out infinite; }
+@keyframes robot-work { 0%,100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-4px) rotate(-3deg); } 75% { transform: translateY(-4px) rotate(3deg); } }
+.robot.sleeping .robot-eye { animation: none; height: 3px; border-radius: 3px; }
+.robot.sleeping .robot-mouth { width: 8px; }
+
+/* Antenna */
+.robot-antenna { width: 3px; height: 14px; background: linear-gradient(var(--purple), var(--blue)); margin-bottom: -2px; position: relative; border-radius: 2px; }
+.robot-antenna::after { content: ''; position: absolute; top: -7px; left: 50%; transform: translateX(-50%); width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, var(--purple), var(--blue)); box-shadow: 0 0 10px var(--purple-glow), 0 0 20px rgba(139,92,246,0.1); animation: antenna-pulse 2s ease-in-out infinite; }
+@keyframes antenna-pulse { 0%,100% { box-shadow: 0 0 6px var(--purple-glow); transform: translateX(-50%) scale(1); } 50% { box-shadow: 0 0 16px var(--purple), 0 0 28px var(--purple-glow); transform: translateX(-50%) scale(1.15); } }
+
+/* Head */
+.robot-head { width: 72px; height: 58px; background: linear-gradient(180deg, #1e2d4a, #172240); border: 2.5px solid #2a3f66; border-radius: 18px; display: flex; align-items: center; justify-content: center; gap: 16px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04); }
+/* Ears */
+.robot-head::before, .robot-head::after { content: ''; position: absolute; width: 8px; height: 14px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 3px; top: 50%; transform: translateY(-50%); }
+.robot-head::before { left: -6px; border-radius: 3px 0 0 3px; }
+.robot-head::after { right: -6px; border-radius: 0 3px 3px 0; }
+
+/* Eyes */
+.robot-eye { width: 12px; height: 14px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue-glow); animation: blink 4s ease-in-out infinite; position: relative; }
 .robot-eye.right { animation-delay: 0.15s; }
+/* Eye highlight (catchlight) */
+.robot-eye::after { content: ''; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.7); }
 @keyframes blink { 0%,42%,58%,100% { transform: scaleY(1); } 50% { transform: scaleY(0.1); } }
-.robot-body-wrap { display: flex; align-items: center; gap: 0; margin-top: 2px; }
-.robot-arm { width: 6px; height: 20px; background: var(--border2); border-radius: 3px; }
+
+/* Blush */
+.robot-blush { position: absolute; bottom: 12px; width: 10px; height: 6px; border-radius: 50%; background: rgba(244,114,182,0.35); }
+.robot-blush.left { left: 10px; }
+.robot-blush.right { right: 10px; }
+
+/* Mouth */
+.robot-mouth { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 12px; height: 6px; border: 2px solid var(--teal); border-top: none; border-radius: 0 0 8px 8px; }
+.robot.working .robot-mouth { border-radius: 50%; width: 8px; height: 8px; border: 2px solid var(--teal); border-top: 2px solid var(--teal); bottom: 8px; }
+
+/* Body */
+.robot-body-wrap { display: flex; align-items: flex-start; gap: 0; margin-top: 3px; }
+.robot-arm { width: 8px; height: 22px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 4px; position: relative; }
 .robot-arm.left { transform-origin: top right; animation: arm-l 3s ease-in-out infinite; }
 .robot-arm.right { transform-origin: top left; animation: arm-r 3s ease-in-out infinite; }
-@keyframes arm-l { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-8deg); } }
-@keyframes arm-r { 0%,100% { transform: rotate(0); } 50% { transform: rotate(8deg); } }
-.robot-body { width: 38px; height: 28px; background: linear-gradient(180deg, #1a2744, #152036); border: 2px solid var(--border2); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
-.robot-screen { width: 18px; height: 8px; border-radius: 2px; background: var(--blue); opacity: 0.3; animation: screen-flicker 1.5s ease-in-out infinite; }
-@keyframes screen-flicker { 0%,100% { opacity: 0.3; } 50% { opacity: 0.7; } }
-.robot-legs { display: flex; gap: 10px; margin-top: 2px; }
-.robot-leg { width: 10px; height: 10px; background: var(--border2); border-radius: 0 0 4px 4px; }
+/* Hands */
+.robot-arm::after { content: ''; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 10px; height: 10px; border-radius: 50%; background: #2a3f66; }
+@keyframes arm-l { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-12deg); } }
+@keyframes arm-r { 0%,100% { transform: rotate(0); } 50% { transform: rotate(12deg); } }
+.robot.working .robot-arm.left { animation: arm-work-l 0.6s ease-in-out infinite; }
+.robot.working .robot-arm.right { animation: arm-work-r 0.6s ease-in-out infinite; }
+@keyframes arm-work-l { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(-25deg); } }
+@keyframes arm-work-r { 0%,100% { transform: rotate(5deg); } 50% { transform: rotate(25deg); } }
+.robot-body { width: 46px; height: 32px; background: linear-gradient(180deg, #1e2d4a, #172240); border: 2.5px solid #2a3f66; border-radius: 10px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+.robot-screen { font-size: 14px; animation: screen-heart 2s ease-in-out infinite; }
+@keyframes screen-heart { 0%,100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.2); opacity: 1; } }
+
+/* Legs */
+.robot-legs { display: flex; gap: 12px; margin-top: 3px; }
+.robot-leg { width: 12px; height: 12px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 4px 4px 6px 6px; }
 
 /* Agent status text */
-.agent-info { flex: 1; min-width: 0; }
+.agent-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
 .agent-status-line { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .agent-status-text { font-size: 15px; font-weight: 600; }
-.agent-action { font-size: 13px; color: var(--text2); margin-bottom: 8px; }
+.agent-action { font-size: 13px; color: var(--text2); margin-bottom: 8px; line-height: 1.5; }
 .agent-meta { display: flex; gap: 14px; flex-wrap: wrap; }
 .agent-meta-item { font-size: 12px; }
 .agent-meta-label { color: var(--text3); }
@@ -76,12 +114,19 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .regime-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
 .regime-badge.bullish { background: var(--green-glow); color: var(--green); }
 .regime-badge.bearish { background: var(--red-glow); color: var(--red); }
-.regime-badge.neutral, .regime-badge.unknown { background: rgba(122,139,168,0.15); color: var(--text2); }
+.regime-badge.neutral { background: rgba(122,139,168,0.15); color: var(--text2); }
+.regime-badge.warming { background: var(--amber-glow); color: var(--amber); }
+.regime-badge.volatile { background: var(--purple-glow); color: var(--purple); }
 
 /* ── Metric Cards ── */
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
 @media (max-width: 700px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
-.metric { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.metric { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; position: relative; overflow: hidden; }
+.metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+.metric:nth-child(1)::before { background: linear-gradient(90deg, var(--teal), var(--blue)); }
+.metric:nth-child(2)::before { background: linear-gradient(90deg, var(--blue), var(--purple)); }
+.metric:nth-child(3)::before { background: linear-gradient(90deg, var(--green), var(--teal)); }
+.metric:nth-child(4)::before { background: linear-gradient(90deg, var(--purple), var(--pink)); }
 .metric-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 4px; }
 .metric-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
 .metric-value.green { color: var(--green); }
@@ -94,20 +139,21 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .chart-title { font-size: 13px; font-weight: 600; color: var(--text2); }
 .chart-tabs { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .chart-tab { padding: 5px 14px; font-size: 11px; font-weight: 600; color: var(--text3); cursor: pointer; transition: all 0.15s; border: none; background: transparent; }
-.chart-tab.active { background: var(--blue); color: #fff; }
+.chart-tab.active { background: linear-gradient(135deg, var(--blue), var(--purple2)); color: #fff; }
 .chart-tab:hover:not(.active) { color: var(--text2); background: var(--surface); }
 .chart-wrap { height: 240px; position: relative; }
 @media (max-width: 600px) { .chart-wrap { height: 200px; } }
 
-/* ── Positions ── */
+/* ── Sections ── */
 .section { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .section-title { font-size: 13px; font-weight: 600; color: var(--text2); }
 .section-badge { font-size: 11px; color: var(--text3); }
 
-/* Position cards (mobile-friendly) */
+/* Position cards */
 .pos-list { display: flex; flex-direction: column; gap: 8px; }
-.pos-card { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.pos-card { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); transition: border-color 0.15s; }
+.pos-card:hover { border-color: var(--border2); }
 .pos-left { display: flex; align-items: center; gap: 10px; }
 .pos-symbol { font-weight: 700; font-size: 14px; }
 .pos-side { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
@@ -126,20 +172,20 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .timeline::-webkit-scrollbar { width: 4px; }
 .timeline::-webkit-scrollbar-track { background: transparent; }
 .timeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.tl-item { position: relative; padding: 12px 12px 12px 28px; margin-bottom: 4px; border-radius: var(--radius-sm); transition: background 0.15s; }
+.tl-item { position: relative; padding: 12px 12px 12px 28px; margin-bottom: 4px; border-radius: var(--radius-sm); transition: background 0.15s; cursor: pointer; }
 .tl-item:hover { background: var(--surface); }
 .tl-dot { position: absolute; left: 8px; top: 16px; width: 8px; height: 8px; border-radius: 50%; }
-.tl-dot.comprehensive { background: var(--blue); box-shadow: 0 0 6px var(--blue-glow); }
-.tl-dot.urgent { background: var(--red); box-shadow: 0 0 6px var(--red-glow); }
+.tl-dot.comprehensive { background: var(--purple); box-shadow: 0 0 6px var(--purple-glow); }
+.tl-dot.urgent { background: var(--coral); box-shadow: 0 0 6px var(--red-glow); }
 .tl-line { position: absolute; left: 11px; top: 28px; bottom: -4px; width: 2px; background: var(--border); }
 .tl-item:last-child .tl-line { display: none; }
 .tl-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .tl-type { font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.tl-type.comprehensive { color: var(--blue); }
-.tl-type.urgent { color: var(--red); }
+.tl-type.comprehensive { color: var(--purple); }
+.tl-type.urgent { color: var(--coral); }
 .tl-time { font-size: 11px; color: var(--text3); }
-.tl-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
-.tl-meta-tag { font-size: 11px; color: var(--text2); }
+.tl-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.tl-meta-tag { font-size: 10px; color: var(--text2); padding: 1px 6px; background: var(--surface); border-radius: 3px; border: 1px solid var(--border); }
 .tl-reasoning { font-size: 12px; color: var(--text2); line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .tl-item.expanded .tl-reasoning { -webkit-line-clamp: unset; }
 .tl-trade { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
@@ -148,39 +194,32 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .tl-empty { text-align: center; color: var(--text3); padding: 24px; font-size: 13px; }
 
 /* ── Share Modal ── */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
 .modal-overlay.show { display: flex; }
-.modal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); max-width: 540px; width: 100%; max-height: 90vh; overflow-y: auto; }
+.modal { background: var(--card); border: 1px solid var(--border2); border-radius: var(--radius); max-width: 540px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
 .modal-title { font-size: 15px; font-weight: 700; }
 .modal-close { background: none; border: none; color: var(--text2); font-size: 20px; cursor: pointer; padding: 4px; }
 .modal-body { padding: 16px; }
-.modal-preview { width: 100%; border-radius: var(--radius-sm); margin-bottom: 12px; }
+.modal-preview { width: 100%; border-radius: var(--radius-sm); margin-bottom: 12px; border: 1px solid var(--border); }
 .modal-actions { display: flex; gap: 8px; }
 .modal-actions .btn { flex: 1; justify-content: center; }
 
-/* ── Share watermark (hidden, shown only during capture) ── */
-.share-watermark { display: none; padding: 8px 16px; text-align: center; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); }
-
-/* ── Utilities ── */
-.empty { text-align: center; color: var(--text3); padding: 24px; font-size: 13px; }
-.skeleton { background: linear-gradient(90deg, var(--surface) 25%, var(--card) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
-@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+/* ── Share watermark ── */
+.share-watermark { display: none; padding: 10px 16px; text-align: center; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); background: linear-gradient(90deg, var(--purple-glow), transparent, var(--teal-glow)); }
 </style>
 </head>
 <body>
 <div class="app">
-  <!-- === Share Card (capture boundary) === -->
   <div id="shareCard">
-    <!-- Header -->
     <header>
       <div class="logo">
         <span class="live-dot" id="liveDot"></span>
         <h1>TradeBot</h1>
       </div>
       <div class="header-right">
-        <span class="uptime-badge" id="uptime">-</span>
-        <button class="btn btn-primary" id="shareBtn" onclick="openShare()">
+        <span class="uptime-badge" id="uptime">connecting...</span>
+        <button class="btn btn-primary" onclick="openShare()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
           Share
         </button>
@@ -194,20 +233,23 @@ header { display: flex; align-items: center; justify-content: space-between; pad
         <div class="robot-head">
           <div class="robot-eye left"></div>
           <div class="robot-eye right"></div>
+          <div class="robot-blush left"></div>
+          <div class="robot-blush right"></div>
+          <div class="robot-mouth"></div>
         </div>
         <div class="robot-body-wrap">
           <div class="robot-arm left"></div>
-          <div class="robot-body"><div class="robot-screen"></div></div>
+          <div class="robot-body"><div class="robot-screen" id="robotScreen">&#9829;</div></div>
           <div class="robot-arm right"></div>
         </div>
         <div class="robot-legs"><div class="robot-leg"></div><div class="robot-leg"></div></div>
       </div>
       <div class="agent-info">
         <div class="agent-status-line">
-          <span class="agent-status-text" id="agentStatus">Initializing...</span>
-          <span class="regime-badge unknown" id="regimeBadge">-</span>
+          <span class="agent-status-text" id="agentStatus">Waking up...</span>
+          <span class="regime-badge warming" id="regimeBadge">starting</span>
         </div>
-        <div class="agent-action" id="agentAction">Connecting to exchange...</div>
+        <div class="agent-action" id="agentAction">Connecting to exchange and loading market data...</div>
         <div class="agent-meta">
           <div class="agent-meta-item"><span class="agent-meta-label">Direction </span><span class="agent-meta-val" id="metaDir">-</span></div>
           <div class="agent-meta-item"><span class="agent-meta-label">Confidence </span><span class="agent-meta-val" id="metaConf">-</span></div>
@@ -225,9 +267,9 @@ header { display: flex; align-items: center; justify-content: space-between; pad
         <div class="metric-sub" id="mBalanceSub"></div>
       </div>
       <div class="metric">
-        <div class="metric-label">Equity (bal + uPnL)</div>
+        <div class="metric-label">Equity</div>
         <div class="metric-value" id="mEquity">-</div>
-        <div class="metric-sub" id="mEquitySub"></div>
+        <div class="metric-sub" id="mEquitySub">balance + unrealized</div>
       </div>
       <div class="metric">
         <div class="metric-label">Unrealized PnL</div>
@@ -245,7 +287,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     <div class="chart-section">
       <div class="chart-header">
         <div class="chart-title" id="chartLabel">PnL</div>
-        <div class="chart-tabs" id="chartTabs">
+        <div class="chart-tabs">
           <button class="chart-tab active" data-mode="daily">Daily</button>
           <button class="chart-tab" data-mode="cumulative">Cumulative</button>
         </div>
@@ -253,7 +295,6 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
     </div>
 
-    <!-- Hidden watermark for share capture -->
     <div class="share-watermark" id="shareWatermark">TradeBot &mdash; AI Crypto Trading Bot</div>
   </div>
 
@@ -264,7 +305,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       <span class="section-badge" id="posBadge">-</span>
     </div>
     <div class="pos-list" id="positions">
-      <div class="pos-empty">Loading...</div>
+      <div class="pos-empty">No open positions</div>
     </div>
   </div>
 
@@ -275,7 +316,7 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       <span class="section-badge" id="tlBadge">-</span>
     </div>
     <div class="timeline" id="timeline">
-      <div class="tl-empty">Loading...</div>
+      <div class="tl-empty">Waiting for first analysis...</div>
     </div>
   </div>
 </div>
@@ -308,14 +349,12 @@ const $ = id => document.getElementById(id);
 let mainChart = null;
 let chartMode = 'daily';
 let pnlCache = [];
-let equityCache = [];
 let shareDataUrl = '';
 
-// ── Helpers ──
 function fmtUsd(v) {
   const n = Number(v);
   if (isNaN(n)) return '-';
-  return (n >= 0 ? '+' : '') + '$' + Math.abs(n).toFixed(2);
+  return (n >= 0 ? '+' : '-') + '$' + Math.abs(n).toFixed(2);
 }
 function fmtUsdPlain(v) {
   const n = Number(v);
@@ -324,11 +363,7 @@ function fmtUsdPlain(v) {
 function pnlColor(v) { return Number(v) >= 0 ? 'green' : 'red'; }
 function fmtTime(ts) {
   const d = new Date(ts);
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const dd = String(d.getDate()).padStart(2,'0');
-  const hh = String(d.getHours()).padStart(2,'0');
-  const mi = String(d.getMinutes()).padStart(2,'0');
-  return `${mm}-${dd} ${hh}:${mi}`;
+  return String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 function fmtDuration(ms) {
   const m = Math.floor(ms/60000), h = Math.floor(m/60), d = Math.floor(h/24);
@@ -337,66 +372,57 @@ function fmtDuration(ms) {
   return m + 'm';
 }
 function timeAgo(ts) {
+  if (!ts) return '';
   const diff = Date.now() - ts;
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return Math.floor(diff/60000) + 'min ago';
   return Math.floor(diff/3600000) + 'h ago';
 }
-
 async function fetchJson(url) {
   try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch { return null; }
 }
 
 // ── Chart ──
 function initChart() {
-  const ctx = $('mainChart').getContext('2d');
-  mainChart = new Chart(ctx, {
+  mainChart = new Chart($('mainChart').getContext('2d'), {
     type: 'bar',
     data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: {
-        backgroundColor: '#1a2744', titleColor: '#e8edf5', bodyColor: '#e8edf5',
-        borderColor: '#253552', borderWidth: 1, padding: 10, cornerRadius: 8,
-        callbacks: { label: ctx => (ctx.parsed.y >= 0 ? '+$' : '-$') + Math.abs(ctx.parsed.y).toFixed(2) }
+        backgroundColor: '#1e2d4a', titleColor: '#e8edf5', bodyColor: '#e8edf5',
+        borderColor: '#2a3f66', borderWidth: 1, padding: 10, cornerRadius: 8,
+        callbacks: { label: c => (c.parsed.y >= 0 ? '+$' : '-$') + Math.abs(c.parsed.y).toFixed(2) }
       }},
       scales: {
-        x: { ticks: { color: '#4a5a75', maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#111a2b' } },
-        y: { ticks: { color: '#4a5a75', font: { size: 10 }, callback: v => '$' + v.toFixed(0) }, grid: { color: '#111a2b' } },
+        x: { ticks: { color: '#4a5a75', maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(28,42,66,0.5)' } },
+        y: { ticks: { color: '#4a5a75', font: { size: 10 }, callback: v => '$' + v.toFixed(0) }, grid: { color: 'rgba(28,42,66,0.5)' } },
       },
     }
   });
 }
-
 function updateChart() {
   if (!mainChart || !pnlCache.length) return;
   const labels = pnlCache.map(d => d.date.slice(5));
-
   if (chartMode === 'daily') {
     mainChart.config.type = 'bar';
-    mainChart.data.labels = labels;
-    mainChart.data.datasets = [{
+    mainChart.data = { labels, datasets: [{
       data: pnlCache.map(d => d.pnl),
       backgroundColor: pnlCache.map(d => d.pnl >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
       borderRadius: 3,
-    }];
+    }]};
     $('chartLabel').textContent = 'Daily PnL';
   } else {
     mainChart.config.type = 'line';
-    mainChart.data.labels = labels;
-    mainChart.data.datasets = [{
+    mainChart.data = { labels, datasets: [{
       data: pnlCache.map(d => d.cumulative),
-      borderColor: '#3b82f6',
-      backgroundColor: 'rgba(59,130,246,0.08)',
-      fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5,
-      borderWidth: 2,
-    }];
+      borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
+      fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+    }]};
     $('chartLabel').textContent = 'Cumulative PnL';
   }
   mainChart.update('none');
 }
-
-// Tab click handlers
 document.querySelectorAll('.chart-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
@@ -406,57 +432,87 @@ document.querySelectorAll('.chart-tab').forEach(tab => {
   });
 });
 
-// ── Render ──
+// ── Render: Agent ──
 function renderAgent(status) {
-  if (!status) return;
-  // Live dot
-  $('liveDot').className = 'live-dot ' + (status.running ? '' : 'off');
+  const robot = $('robot');
+  const screenEmojis = { bullish: '&#9829;', bearish: '&#9889;', neutral: '&#9733;' };
+
+  // API unavailable — show sleeping bot
+  if (!status || !status.brain) {
+    $('liveDot').className = 'live-dot' + (status?.running ? '' : ' off');
+    if (status) $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
+
+    if (!status) {
+      robot.className = 'robot sleeping';
+      $('agentStatus').textContent = 'Connecting...';
+      $('regimeBadge').className = 'regime-badge warming';
+      $('regimeBadge').textContent = 'offline';
+      $('agentAction').textContent = 'Waiting for engine to start...';
+    }
+    return;
+  }
+
+  $('liveDot').className = 'live-dot' + (status.running ? '' : ' off');
   $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
 
   const b = status.brain;
-  if (!b) return;
+  const firstAnalysisDone = b.updatedAt > 0;
+  const isRecent = firstAnalysisDone && (Date.now() - b.updatedAt < 300000);
 
   // Robot state
-  const robot = $('robot');
-  const isRecent = b.updatedAt && (Date.now() - b.updatedAt < 300000); // within 5min
-  robot.className = 'robot' + (isRecent ? ' working' : '');
+  if (!firstAnalysisDone) {
+    robot.className = 'robot';
+    $('robotScreen').innerHTML = '&#10024;'; // sparkle while warming up
+  } else if (isRecent) {
+    robot.className = 'robot working';
+    $('robotScreen').innerHTML = screenEmojis[b.direction] || '&#9733;';
+  } else {
+    robot.className = 'robot';
+    $('robotScreen').innerHTML = screenEmojis[b.direction] || '&#9829;';
+  }
 
   // Eye color by direction
-  const eyeColor = b.direction === 'bullish' ? 'var(--green)' : b.direction === 'bearish' ? 'var(--red)' : 'var(--blue)';
+  const eyeColors = { bullish: 'var(--green)', bearish: 'var(--coral)', neutral: 'var(--blue)' };
+  const eyeGlows = { bullish: 'var(--green-glow)', bearish: 'var(--red-glow)', neutral: 'var(--blue-glow)' };
+  const eyeColor = eyeColors[b.direction] || 'var(--blue)';
+  const eyeGlow = eyeGlows[b.direction] || 'var(--blue-glow)';
   document.querySelectorAll('.robot-eye').forEach(e => {
     e.style.background = eyeColor;
-    e.style.boxShadow = `0 0 6px ${eyeColor}`;
+    e.style.boxShadow = '0 0 8px ' + eyeGlow;
   });
-  // Antenna color
-  const antenna = document.querySelector('.robot-antenna::after');
-  document.querySelector('.robot-antenna').style.setProperty('--antenna-color', eyeColor);
 
-  // Status text
-  const regimeNames = { trending_up: 'Trending Up', trending_down: 'Trending Down', range: 'Ranging', volatile: 'Volatile', unknown: 'Unknown' };
-  $('agentStatus').textContent = regimeNames[b.regime] || b.regime;
+  // Status text — friendly names
+  if (!firstAnalysisDone) {
+    $('agentStatus').textContent = 'Warming Up';
+    const badge = $('regimeBadge');
+    badge.className = 'regime-badge warming';
+    badge.textContent = 'starting';
+    $('agentAction').textContent = 'Running first market analysis... this takes about 30 seconds.';
+  } else {
+    const regimeNames = { trending_up: 'Trending Up', trending_down: 'Trending Down', range: 'Ranging', volatile: 'High Volatility', unknown: 'Scanning' };
+    $('agentStatus').textContent = regimeNames[b.regime] || b.regime;
 
-  // Regime badge
-  const badge = $('regimeBadge');
-  const dirClass = b.direction === 'bullish' ? 'bullish' : b.direction === 'bearish' ? 'bearish' : 'neutral';
-  badge.className = 'regime-badge ' + dirClass;
-  badge.textContent = b.direction;
+    const badge = $('regimeBadge');
+    const dirClass = b.direction === 'bullish' ? 'bullish' : b.direction === 'bearish' ? 'bearish' : b.regime === 'volatile' ? 'volatile' : 'neutral';
+    badge.className = 'regime-badge ' + dirClass;
+    badge.textContent = b.direction;
 
-  // Action text
-  const actionTexts = {
-    trending_up: 'Riding the trend, scanning for momentum entries...',
-    trending_down: 'Bearish conditions, watching for short opportunities...',
-    range: 'Sideways market, waiting for breakout signals...',
-    volatile: 'High volatility detected, tightening risk parameters...',
-    unknown: 'Gathering market data...',
-  };
-  const ago = b.updatedAt ? timeAgo(b.updatedAt) : '';
-  $('agentAction').textContent = (b.reasoning || actionTexts[b.regime] || 'Monitoring markets...').slice(0, 100) + (ago ? ` (${ago})` : '');
+    const actionTexts = {
+      trending_up: 'Riding the trend, scanning for momentum entries...',
+      trending_down: 'Bearish conditions, watching for short opportunities...',
+      range: 'Sideways market, waiting for breakout signals...',
+      volatile: 'High volatility detected, tightening risk parameters...',
+      unknown: 'Gathering market data...',
+    };
+    const ago = timeAgo(b.updatedAt);
+    const reason = b.reasoning && b.reasoning !== 'Initializing...' ? b.reasoning : actionTexts[b.regime] || 'Monitoring markets...';
+    $('agentAction').textContent = reason.slice(0, 120) + (ago ? ' (' + ago + ')' : '');
+  }
 
   // Meta
   $('metaDir').textContent = b.direction || '-';
   $('metaConf').textContent = b.confidence ? b.confidence + '%' : '-';
-  const riskDots = b.riskLevel ? Array(b.riskLevel).fill('●').join('') + Array(5 - b.riskLevel).fill('○').join('') : '-';
-  $('metaRisk').textContent = riskDots;
+  $('metaRisk').textContent = b.riskLevel ? Array(b.riskLevel).fill('●').join('') + Array(5 - b.riskLevel).fill('○').join('') : '-';
   if (status.llm) {
     $('metaLlm').textContent = status.llm.callsToday + ' calls ($' + status.llm.estimatedCostUsd.toFixed(3) + ')';
   }
@@ -465,13 +521,13 @@ function renderAgent(status) {
 function renderMetrics(equity, fills, stats) {
   if (equity) {
     $('mBalance').textContent = fmtUsdPlain(equity.balance);
+    $('mBalanceSub').textContent = 'margin used: ' + fmtUsdPlain(equity.balance - equity.equity + equity.unrealizedPnl);
     $('mEquity').textContent = fmtUsdPlain(equity.equity);
 
     const upnlEl = $('mUpnl');
     upnlEl.textContent = fmtUsd(equity.unrealizedPnl);
     upnlEl.className = 'metric-value ' + pnlColor(equity.unrealizedPnl);
   }
-
   if (fills && fills.length > 0) {
     const realized = fills.reduce((s, f) => s + parseFloat(f.closedPnl), 0);
     const rpnlEl = $('mRpnl');
@@ -498,10 +554,7 @@ function renderPositions(positions) {
     const pnl = Number(p.unrealizedPnl);
     return `<div class="pos-card">
       <div class="pos-left">
-        <div>
-          <span class="pos-symbol">${p.symbol}-PERP</span>
-          <span class="pos-side ${p.side}">${p.side.toUpperCase()}</span>
-        </div>
+        <div><span class="pos-symbol">${p.symbol}-PERP</span> <span class="pos-side ${p.side}">${p.side.toUpperCase()}</span></div>
         <div class="pos-details">${Number(p.size).toFixed(4)} @ ${fmtUsdPlain(p.entryPrice)} | ${p.leverage}x</div>
       </div>
       <div class="pos-right">
@@ -515,7 +568,7 @@ function renderPositions(positions) {
 function renderTimeline(decisions) {
   const wrap = $('timeline');
   if (!decisions || decisions.length === 0) {
-    wrap.innerHTML = '<div class="tl-empty">No analysis data yet</div>';
+    wrap.innerHTML = '<div class="tl-empty">Waiting for first analysis...</div>';
     $('tlBadge').textContent = '';
     return;
   }
@@ -524,22 +577,18 @@ function renderTimeline(decisions) {
     const isUrgent = d.type === 'urgent_trigger';
     const typeClass = isUrgent ? 'urgent' : 'comprehensive';
     const hasTrade = d.had_trade === 1;
-
     let meta = '';
     if (d.regime) meta += `<span class="tl-meta-tag">${d.regime}</span>`;
     if (d.direction) meta += `<span class="tl-meta-tag">${d.direction}</span>`;
     if (d.confidence) meta += `<span class="tl-meta-tag">${d.confidence}%</span>`;
     if (isUrgent && d.trigger_symbol) meta += `<span class="tl-meta-tag">${d.trigger_symbol} (score ${d.trigger_score})</span>`;
-
     let trade = '';
     if (hasTrade && d.trade_symbol) {
       const cls = d.trade_side === 'sell' ? 'sell' : 'buy';
       trade = `<div class="tl-trade ${cls}">${d.trade_side?.toUpperCase()} ${d.trade_symbol}</div>`;
     }
-
     return `<div class="tl-item" onclick="this.classList.toggle('expanded')">
-      <div class="tl-dot ${typeClass}"></div>
-      <div class="tl-line"></div>
+      <div class="tl-dot ${typeClass}"></div><div class="tl-line"></div>
       <div class="tl-header">
         <span class="tl-type ${typeClass}">${isUrgent ? 'Urgent Trigger' : 'Comprehensive'}</span>
         <span class="tl-time">${fmtTime(d.timestamp)}</span>
@@ -553,28 +602,17 @@ function renderTimeline(decisions) {
 
 // ── Share ──
 async function openShare() {
-  const card = $('shareCard');
-  const watermark = $('shareWatermark');
-  watermark.style.display = 'block';
+  const wm = $('shareWatermark');
+  wm.style.display = 'block';
   try {
-    const canvas = await html2canvas(card, {
-      backgroundColor: '#06090f',
-      scale: 2,
-      useCORS: true,
-      logging: false,
-    });
+    const canvas = await html2canvas($('shareCard'), { backgroundColor: '#06090f', scale: 2, useCORS: true, logging: false });
     shareDataUrl = canvas.toDataURL('image/png');
     $('sharePreview').src = shareDataUrl;
     $('shareModal').classList.add('show');
-  } catch (err) {
-    console.error('Screenshot failed:', err);
-    alert('Failed to capture screenshot');
-  } finally {
-    watermark.style.display = 'none';
-  }
+  } catch (err) { console.error(err); alert('Screenshot failed'); }
+  finally { wm.style.display = 'none'; }
 }
 function closeShare() { $('shareModal').classList.remove('show'); }
-
 function downloadImage() {
   if (!shareDataUrl) return;
   const a = document.createElement('a');
@@ -582,56 +620,33 @@ function downloadImage() {
   a.download = 'tradebot-' + new Date().toISOString().slice(0,10) + '.png';
   a.click();
 }
-
 async function shareToX() {
-  // Try Web Share API first (works on mobile)
   if (navigator.share && navigator.canShare) {
     try {
       const blob = await fetch(shareDataUrl).then(r => r.blob());
       const file = new File([blob], 'tradebot.png', { type: 'image/png' });
-      if (navigator.canShare({ files: [file] })) {
-        await navigator.share({ text: 'My AI trading bot performance', files: [file] });
-        closeShare();
-        return;
-      }
+      if (navigator.canShare({ files: [file] })) { await navigator.share({ text: 'My AI trading bot performance', files: [file] }); closeShare(); return; }
     } catch {}
   }
-  // Fallback: download + open X compose
   downloadImage();
-  const text = encodeURIComponent('My AI trading bot performance #TradeBot #CryptoTrading');
-  window.open('https://x.com/intent/post?text=' + text, '_blank');
+  window.open('https://x.com/intent/post?text=' + encodeURIComponent('My AI trading bot performance #TradeBot #CryptoTrading'), '_blank');
   closeShare();
 }
-
-// Close modal on overlay click
 $('shareModal').addEventListener('click', e => { if (e.target === $('shareModal')) closeShare(); });
 
-// ── Main Loop ──
+// ── Main ──
 async function refresh() {
   const [status, equity, pnlData, fills, positions, stats, decisions] = await Promise.all([
-    fetchJson('/api/status'),
-    fetchJson('/api/equity'),
-    fetchJson('/api/daily-pnl?days=90'),
-    fetchJson('/api/fills?limit=50'),
-    fetchJson('/api/positions'),
-    fetchJson('/api/stats'),
-    fetchJson('/api/decisions?limit=30'),
+    fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/daily-pnl?days=90'),
+    fetchJson('/api/fills?limit=50'), fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=30'),
   ]);
-
   renderAgent(status);
   renderMetrics(equity, fills, stats);
   renderPositions(positions);
   renderTimeline(decisions);
-
-  if (pnlData && pnlData.length > 0) {
-    pnlCache = pnlData;
-    updateChart();
-  }
+  if (pnlData && pnlData.length > 0) { pnlCache = pnlData; updateChart(); }
 }
-
-initChart();
-refresh();
-setInterval(refresh, 30000);
+initChart(); refresh(); setInterval(refresh, 30000);
 </script>
 </body>
 </html>
