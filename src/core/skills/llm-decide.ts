@@ -11,86 +11,12 @@ import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
 import { randomUUID } from 'crypto';
 import { createChildLogger } from '../../monitoring/logger.js';
 import { logTradeLesson } from '../../data/storage.js';
+import { promptManager } from '../prompt-manager.js';
 
 const log = createChildLogger('llm-decide');
 
-// ============================================================
-// System Prompt: decideTrade (focused, ~50 lines vs original 115)
-// ============================================================
-
-const DECIDE_TRADE_SYSTEM_PROMPT = `You are a crypto perpetual futures trader on Hyperliquid.
-
-You receive PRE-ANALYZED context from code-based systems. Your ONLY job:
-Validate the opportunity and propose exact trade parameters, OR reject as noise.
-
-## What You Receive (already processed by code)
-- CONTEXT: Current market regime, direction, risk level
-- SIGNAL: Which indicators triggered, quality rating, direction alignment
-- EXTERNAL: Whether Polymarket/DeFi/Trending data confirms or contradicts
-- RISK: Available capital, drawdown, position limits
-- PRICE DATA: Technical snapshot of the triggered symbol
-
-## Decision Process
-1. Do the signals converge into a real setup?
-2. Does external intelligence confirm the technical signal?
-3. Is the risk/reward acceptable given current conditions?
-4. Be decisive — propose or reject. No vague answers.
-
-## Confidence & Leverage (STRICT)
-- "highest" (10-15x, 20-25% size): External intel + TA perfectly aligned. RARE.
-- "high" (5-10x, 15-20% size): 3+ aligned signals + external confirms. Scorer 8+.
-- "medium" (3-5x, 10-15% size): TA-only decent setup. No external confirmation.
-- "low" (3x, 5-10% size): Marginal or counter-trend setup.
-
-## Risk Rules (STRICT)
-- Stop loss REQUIRED on every trade.
-  - 10-15x leverage: SL within 1-2% of entry
-  - 5-10x: SL within 2-3%
-  - 3-5x: SL within 3-5%
-  - 3x: SL within 5-8%
-- Take profit: Minimum 1.5:1 R:R ratio, prefer 2:1+
-- Max 25% of allocated capital per trade.
-- Extreme funding (>0.05%/h): bias opposite direction.
-
-## Response: JSON only. No markdown.
-For a trade:
-{ "action": "propose_trade", "symbol": "ETH-PERP", "side": "buy",
-  "entry_price": 2500.00, "stop_loss": 2450.00, "take_profit": 2600.00,
-  "size_pct": 15, "leverage": 5, "confidence": "high",
-  "rationale": "Brief reason citing which signals and external factors drove the decision" }
-
-For no trade:
-{ "action": "no_trade", "rationale": "Why this is noise, not signal" }`;
-
-// ============================================================
-// System Prompt: assessRegime (comprehensive, 30-min)
-// ============================================================
-
-const ASSESS_REGIME_SYSTEM_PROMPT = `You are the strategic brain of a crypto trading bot on Hyperliquid.
-
-Every 30 minutes, you assess market state and set strategic directives.
-You are NOT making individual trades — you are setting CONTEXT for strategies.
-
-## What You Assess
-1. Market Regime: trending_up, trending_down, range, volatile, unknown
-2. Direction: bullish, bearish, neutral
-3. Risk Level: 1 (calm) to 5 (extreme danger)
-4. Strategy Directives: how each strategy should adjust
-
-## Data Sources You Receive
-- Previous assessment (for continuity)
-- Market snapshots with technical indicators
-- External intelligence (Polymarket, DefiLlama, CoinGecko) summaries
-- Current risk assessment
-
-## Response: JSON only, no markdown.
-{ "regime": "trending_up", "direction": "bullish", "risk_level": 2, "confidence": 75,
-  "reasoning": "Brief explanation including external intelligence factors",
-  "directives": {
-    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
-    "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
-  }
-}`;
+// System prompts are now managed by PromptManager (src/core/prompt-manager.ts)
+// Access via: promptManager.get('decide_trade'), promptManager.get('assess_regime'), etc.
 
 // ============================================================
 // decideTrade: Urgent trigger → focused LLM call
@@ -159,7 +85,7 @@ export async function decideTrade(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      DECIDE_TRADE_SYSTEM_PROMPT,
+      promptManager.get('decide_trade'),
       prompt,
       'skill_decide',
     );
@@ -194,7 +120,7 @@ export async function assessRegime(
 
   try {
     return await advisor.callComprehensiveWithSystemPrompt(
-      ASSESS_REGIME_SYSTEM_PROMPT,
+      promptManager.get('assess_regime'),
       contextWithBalance,
     );
   } catch (err) {
@@ -203,100 +129,6 @@ export async function assessRegime(
   }
 }
 
-// ============================================================
-// System Prompt: critiqueTrade (adversarial risk review)
-// ============================================================
-
-const CRITIQUE_TRADE_SYSTEM_PROMPT = `You are a risk analyst reviewing a proposed crypto perpetual futures trade.
-Your role is ADVERSARIAL — intentionally look for flaws, over-optimism, and hidden risks.
-
-## Your Checks
-1. Is the stop loss appropriate for the leverage? (Higher leverage → tighter SL needed)
-2. Is the R:R ratio realistic given current volatility?
-3. Do the signal direction and market regime actually align?
-4. Is the leverage excessive relative to the confidence level?
-5. Does external intelligence genuinely confirm the thesis, or is it over-interpreted?
-
-## Scoring (1-10)
-- 1-3: Reject — serious flaws, likely losing trade
-- 4-5: Borderline — reduce size/leverage significantly or reject
-- 6-7: Acceptable — minor adjustments may help
-- 8-10: Strong — proposal is well-reasoned
-
-## Response: JSON only. No markdown.
-{
-  "verdict": "approve" | "reject" | "reduce",
-  "score": 7,
-  "flaws": ["SL too tight for 5x leverage", "Volume declining contradicts breakout thesis"],
-  "adjustments": { "leverage": 3, "size_pct": 10, "stop_loss": 2440 },
-  "reasoning": "Brief explanation of your assessment"
-}
-
-Notes:
-- "adjustments" is optional for "approve", required for "reduce"
-- Be specific in flaws — vague criticism is useless
-- If the trade is solid, say so. Don't reject good trades just to be contrarian.`;
-
-// ============================================================
-// System Prompt: assessRegime — Technical-only perspective
-// ============================================================
-
-const ASSESS_REGIME_TECHNICAL_PROMPT = `You are the technical analysis brain of a crypto trading bot on Hyperliquid.
-
-You assess market state using ONLY technical/on-chain data. No external narrative.
-
-## What You Assess
-1. Market Regime: trending_up, trending_down, range, volatile, unknown
-2. Direction: bullish, bearish, neutral
-3. Risk Level: 1 (calm) to 5 (extreme danger)
-4. Strategy Directives: how each strategy should adjust
-
-## Data You Focus On
-- RSI, EMA crossovers, ATR, Bollinger Bands
-- Volume and volume ratios
-- Open interest changes
-- Funding rates
-- Support/resistance levels
-- Price action across multiple symbols
-
-## Response: JSON only, no markdown.
-{ "regime": "trending_up", "direction": "bullish", "risk_level": 2, "confidence": 75,
-  "reasoning": "Brief TA-based explanation",
-  "directives": {
-    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 10 },
-    "momentum": { "active": true, "leverage_multiplier": 1.2, "allow_long": true, "allow_short": false }
-  }
-}`;
-
-// ============================================================
-// System Prompt: assessRegime — Macro/External perspective
-// ============================================================
-
-const ASSESS_REGIME_MACRO_PROMPT = `You are the macro/narrative analyst brain of a crypto trading bot on Hyperliquid.
-
-You assess market state from the EXTERNAL INTELLIGENCE perspective — what are market participants betting on?
-
-## What You Assess
-1. Market Regime: trending_up, trending_down, range, volatile, unknown
-2. Direction: bullish, bearish, neutral
-3. Risk Level: 1 (calm) to 5 (extreme danger)
-4. Strategy Directives: how each strategy should adjust
-
-## Data You Focus On
-- Polymarket: Prediction market probability shifts (leading indicator for events)
-- DefiLlama: DeFi TVL capital flows — where is money moving?
-- CoinGecko: Trending coins — what does retail sentiment look like?
-- Narrative detection: Is there a strong story driving the market?
-- Event risk: Upcoming catalysts or binary events?
-
-## Response: JSON only, no markdown.
-{ "regime": "volatile", "direction": "bullish", "risk_level": 3, "confidence": 65,
-  "reasoning": "Brief macro/narrative explanation",
-  "directives": {
-    "discretionary": { "active": true, "bias": "long", "focus_symbols": ["ETH-PERP"], "max_leverage": 5 },
-    "momentum": { "active": true, "leverage_multiplier": 1.0, "allow_long": true, "allow_short": true }
-  }
-}`;
 
 // ============================================================
 // critiqueTrade: Adversarial review of a trade proposal
@@ -364,7 +196,7 @@ export async function critiqueTrade(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      CRITIQUE_TRADE_SYSTEM_PROMPT,
+      promptManager.get('critique_trade'),
       parts.join('\n'),
       'skill_critique',
     );
@@ -451,7 +283,7 @@ export async function assessRegimeTechnical(
 
   try {
     return await advisor.callComprehensiveWithSystemPrompt(
-      ASSESS_REGIME_TECHNICAL_PROMPT,
+      promptManager.get('assess_regime_technical'),
       contextWithBalance,
     );
   } catch (err) {
@@ -483,7 +315,7 @@ export async function assessRegimeMacro(
 
   try {
     return await advisor.callComprehensiveWithSystemPrompt(
-      ASSESS_REGIME_MACRO_PROMPT,
+      promptManager.get('assess_regime_macro'),
       contextWithBalance,
     );
   } catch (err) {
@@ -590,39 +422,6 @@ export function mergeRegimeAssessments(
   return { regime, direction, riskLevel, confidence, reasoning, directives: mergedDirectives };
 }
 
-// ============================================================
-// LLM Skill: managePosition — Dynamic position management
-// ============================================================
-
-const MANAGE_POSITION_SYSTEM_PROMPT = `You are the position manager of a crypto perpetual futures trading bot on Hyperliquid.
-
-## Your Job
-Review an OPEN position and decide the optimal management action.
-You are NOT opening new trades — only managing existing ones.
-
-## Actions You Can Take
-1. "hold" — Keep current SL/TP, no change needed
-2. "trail_stop" — Move stop loss to lock in profit (provide new SL price)
-3. "partial_close" — Take partial profit (provide % to close, e.g. 50)
-4. "move_to_breakeven" — Move SL to entry price (risk-free position)
-5. "close_now" — Close entire position immediately (conditions deteriorated)
-
-## Decision Rules
-- Position up 1R+ (profit >= risk distance): Consider moving SL to breakeven
-- Position up 1.5R+: Consider partial close (50%) + trail rest
-- Market regime changed against position: Consider close_now
-- RSI reversed against position (was oversold→overbought or vice versa): Trail or close
-- Volume dying after entry: Position may be stalling, consider tighter stop
-- If in doubt, "hold" — avoid over-managing
-
-## Response: JSON only, no markdown.
-{
-  "action": "trail_stop",
-  "new_stop_loss": 2520.00,
-  "partial_close_pct": null,
-  "reasoning": "Position up 1.2R, moving SL to breakeven+0.5% to protect gains while allowing room for TP"
-}`;
-
 export async function managePosition(
   advisor: LLMAdvisor,
   position: ActiveDiscretionaryPosition,
@@ -658,7 +457,7 @@ export async function managePosition(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      MANAGE_POSITION_SYSTEM_PROMPT,
+      promptManager.get('manage_position'),
       prompt,
       'skill_manage_position',
     );
@@ -668,37 +467,6 @@ export async function managePosition(
     return null;
   }
 }
-
-// ============================================================
-// LLM Skill: reviewTrade — Post-trade analysis & learning
-// ============================================================
-
-const REVIEW_TRADE_SYSTEM_PROMPT = `You are the trade reviewer of a crypto perpetual futures trading bot.
-
-## Your Job
-After a trade closes, analyze what happened and extract lessons for future trades.
-
-## What You Evaluate
-1. Was the entry signal accurate? Which indicators were right/wrong?
-2. Was the exit optimal or could it have been better?
-3. Was leverage appropriate for the setup?
-4. What external factors affected the trade that weren't in the original analysis?
-5. What should be done differently next time in a similar setup?
-
-## Response: JSON only, no markdown.
-{
-  "outcome": "win",
-  "pnl_pct": 3.5,
-  "what_worked": ["RSI reversal signal was accurate", "External intel confirmed direction"],
-  "what_failed": ["TP was too aggressive, price reversed 1% before reaching it"],
-  "signal_accuracy": [
-    {"signal": "RSI oversold", "accurate": true},
-    {"signal": "EMA cross", "accurate": true},
-    {"signal": "Volume surge", "accurate": false}
-  ],
-  "lesson": "RSI extreme + EMA cross is a reliable combo for this symbol. Set TP at 1.5R instead of 2R for faster exits.",
-  "improvement_suggestion": "Consider partial take-profit at 1R to secure gains while letting rest run"
-}`;
 
 export async function reviewTrade(
   advisor: LLMAdvisor,
@@ -727,7 +495,7 @@ export async function reviewTrade(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      REVIEW_TRADE_SYSTEM_PROMPT,
+      promptManager.get('review_trade'),
       prompt,
       'skill_review_trade',
     );
@@ -764,41 +532,6 @@ export async function reviewTrade(
   }
 }
 
-// ============================================================
-// LLM Skill: planScenarios — Pre-trade scenario analysis
-// ============================================================
-
-const PLAN_SCENARIOS_SYSTEM_PROMPT = `You are the scenario planner for a crypto perpetual futures trading bot.
-
-## Your Job
-Before a high-conviction trade executes, model 3 possible outcomes to stress-test the thesis.
-
-## Scenarios to Model
-1. **Bull case**: What if the trade goes perfectly?
-2. **Base case**: Most likely outcome given current conditions
-3. **Bear case**: What could go wrong? How bad could it get?
-
-For each scenario, estimate:
-- Probability (must sum to ~100%)
-- Price target (where would price go?)
-- Position outcome (hit TP, hit SL, partial fill, etc.)
-- PnL estimate in USD
-
-## Final Assessment
-- Is the worst case acceptable given position size and leverage?
-- Overall: proceed / reduce size / abort
-
-## Response: JSON only, no markdown.
-{
-  "scenarios": [
-    {"name": "Bull", "probability": 30, "price_target": 2650, "position_outcome": "TP hit", "pnl_estimate": 45.00},
-    {"name": "Base", "probability": 50, "price_target": 2550, "position_outcome": "Partial profit, manual close", "pnl_estimate": 15.00},
-    {"name": "Bear", "probability": 20, "price_target": 2420, "position_outcome": "SL hit", "pnl_estimate": -25.00}
-  ],
-  "worst_case_acceptable": true,
-  "overall_assessment": "Expected value positive (+$12.50). Worst case -$25 is within risk limits. Proceed."
-}`;
-
 export async function planScenarios(
   advisor: LLMAdvisor,
   proposal: TradeProposal,
@@ -829,7 +562,7 @@ export async function planScenarios(
 
   try {
     const response = await advisor.callWithSystemPrompt(
-      PLAN_SCENARIOS_SYSTEM_PROMPT,
+      promptManager.get('plan_scenarios'),
       prompt,
       'skill_plan_scenarios',
     );

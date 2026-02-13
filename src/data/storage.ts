@@ -205,6 +205,25 @@ function initSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_narrative_history_source_name ON narrative_history(source, name);
     CREATE INDEX IF NOT EXISTS idx_narrative_history_timestamp ON narrative_history(timestamp);
+
+    CREATE TABLE IF NOT EXISTS prompt_overrides (
+      key TEXT PRIMARY KEY,
+      prompt_text TEXT NOT NULL,
+      change_description TEXT,
+      modified_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS prompt_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL,
+      previous_text TEXT NOT NULL,
+      new_text TEXT NOT NULL,
+      change_description TEXT,
+      timestamp INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_prompt_history_key ON prompt_history(key);
+    CREATE INDEX IF NOT EXISTS idx_prompt_history_timestamp ON prompt_history(timestamp);
   `);
 }
 
@@ -580,6 +599,57 @@ export function getRecentNarratives(hoursBack: number = 2): Array<{
     WHERE timestamp > ?
     ORDER BY timestamp DESC
   `).all(since) as Array<{ source: string; name: string; value: number; detail: string | null; timestamp: number }>;
+}
+
+// ============================================================
+// Prompt Overrides
+// ============================================================
+
+export function loadPromptOverrides(): Array<{
+  key: string; prompt_text: string; change_description: string | null; modified_at: number;
+}> {
+  const database = getDb();
+  return database.prepare('SELECT * FROM prompt_overrides').all() as Array<{
+    key: string; prompt_text: string; change_description: string | null; modified_at: number;
+  }>;
+}
+
+export function savePromptOverride(key: string, promptText: string, changeDescription: string | null): void {
+  const database = getDb();
+  database.prepare(`
+    INSERT OR REPLACE INTO prompt_overrides (key, prompt_text, change_description, modified_at)
+    VALUES (?, ?, ?, ?)
+  `).run(key, promptText, changeDescription, Date.now());
+}
+
+export function deletePromptOverride(key: string): void {
+  const database = getDb();
+  database.prepare('DELETE FROM prompt_overrides WHERE key = ?').run(key);
+}
+
+export function logPromptChange(
+  key: string,
+  previousText: string,
+  newText: string,
+  changeDescription: string | null,
+): void {
+  const database = getDb();
+  database.prepare(`
+    INSERT INTO prompt_history (key, previous_text, new_text, change_description, timestamp)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(key, previousText, newText, changeDescription, Date.now());
+}
+
+export function getPromptHistory(key: string, limit: number = 5): Array<{
+  id: number; key: string; change_description: string | null; timestamp: number;
+}> {
+  const database = getDb();
+  return database.prepare(`
+    SELECT id, key, change_description, timestamp FROM prompt_history
+    WHERE key = ? ORDER BY timestamp DESC LIMIT ?
+  `).all(key, limit) as Array<{
+    id: number; key: string; change_description: string | null; timestamp: number;
+  }>;
 }
 
 export function closeDb(): void {
