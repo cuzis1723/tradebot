@@ -14,11 +14,20 @@ import type { FundingRate } from '../../core/types.js';
 
 const log = createChildLogger('hyperliquid');
 
+const API_TIMEOUT_MS = 10_000;
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_RESET_MS = 30_000;
+
 export class HyperliquidClient {
   private sdk: Hyperliquid;
   private connected = false;
   private fillCallbacks: Array<(fill: unknown) => void> = [];
   readonly walletAddress: string;
+
+  // Circuit breaker state
+  private consecutiveFailures = 0;
+  private circuitOpenedAt = 0;
+  private circuitOpen = false;
 
   constructor() {
     // Derive wallet address from private key
@@ -32,6 +41,65 @@ export class HyperliquidClient {
     });
 
     log.info({ walletAddress: this.walletAddress, testnet: config.hlUseTestnet }, 'Hyperliquid client created');
+  }
+
+  // ============================================================
+  // Circuit Breaker & Timeout
+  // ============================================================
+
+  private checkCircuit(): void {
+    if (!this.circuitOpen) return;
+    const elapsed = Date.now() - this.circuitOpenedAt;
+    if (elapsed >= CIRCUIT_BREAKER_RESET_MS) {
+      log.info({ elapsed, consecutiveFailures: this.consecutiveFailures }, 'Circuit breaker: half-open, allowing retry');
+      this.circuitOpen = false;
+      // Keep the failure count; it resets on success
+    } else {
+      const waitMs = CIRCUIT_BREAKER_RESET_MS - elapsed;
+      throw new Error(`Circuit breaker open: ${this.consecutiveFailures} consecutive failures. Retry in ${Math.ceil(waitMs / 1000)}s`);
+    }
+  }
+
+  private onApiSuccess(): void {
+    if (this.consecutiveFailures > 0) {
+      log.info({ previousFailures: this.consecutiveFailures }, 'Circuit breaker: reset after success');
+    }
+    this.consecutiveFailures = 0;
+    this.circuitOpen = false;
+  }
+
+  private onApiFailure(err: unknown): void {
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD && !this.circuitOpen) {
+      this.circuitOpen = true;
+      this.circuitOpenedAt = Date.now();
+      log.error(
+        { consecutiveFailures: this.consecutiveFailures, resetMs: CIRCUIT_BREAKER_RESET_MS },
+        'Circuit breaker: OPEN — blocking API calls for 30s',
+      );
+    }
+    log.warn({ consecutiveFailures: this.consecutiveFailures, err }, 'API call failed');
+  }
+
+  /**
+   * Wrap an SDK call with a timeout and circuit breaker.
+   * Use this for read-only info calls where a timeout + retry is safe.
+   */
+  private async apiCall<T>(fn: () => Promise<T>): Promise<T> {
+    this.checkCircuit();
+    try {
+      const result = await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('API call timed out after 10s')), API_TIMEOUT_MS),
+        ),
+      ]);
+      this.onApiSuccess();
+      return result;
+    } catch (err) {
+      this.onApiFailure(err);
+      throw err;
+    }
   }
 
   async connect(): Promise<void> {
@@ -60,7 +128,7 @@ export class HyperliquidClient {
   // ============================================================
 
   async getAllMidPrices(): Promise<Record<string, Decimal>> {
-    const mids = await this.sdk.info.getAllMids();
+    const mids = await this.apiCall(() => this.sdk.info.getAllMids());
     const result: Record<string, Decimal> = {};
     for (const [symbol, price] of Object.entries(mids as Record<string, string>)) {
       result[symbol] = new Decimal(price);
@@ -69,12 +137,14 @@ export class HyperliquidClient {
   }
 
   async getL2Book(symbol: string): Promise<unknown> {
-    return await this.sdk.info.getL2Book(symbol);
+    return await this.apiCall(() => this.sdk.info.getL2Book(symbol));
   }
 
   async getCandleSnapshot(coin: string, interval: string, startTime: number, endTime: number): Promise<unknown[]> {
-    return await (this.sdk.info as unknown as { getCandleSnapshot: (coin: string, interval: string, startTime: number, endTime: number) => Promise<unknown[]> })
-      .getCandleSnapshot(coin, interval, startTime, endTime);
+    return await this.apiCall(() =>
+      (this.sdk.info as unknown as { getCandleSnapshot: (coin: string, interval: string, startTime: number, endTime: number) => Promise<unknown[]> })
+        .getCandleSnapshot(coin, interval, startTime, endTime),
+    );
   }
 
   // ============================================================
@@ -83,7 +153,7 @@ export class HyperliquidClient {
 
   async getAccountState(walletAddress?: string): Promise<HLClearinghouseState> {
     const address = walletAddress ?? this.walletAddress;
-    const state = await this.sdk.info.perpetuals.getClearinghouseState(address);
+    const state = await this.apiCall(() => this.sdk.info.perpetuals.getClearinghouseState(address));
     return state as unknown as HLClearinghouseState;
   }
 
@@ -104,7 +174,7 @@ export class HyperliquidClient {
 
   async getOpenOrders(walletAddress?: string): Promise<unknown[]> {
     const address = walletAddress ?? this.walletAddress;
-    const orders = await this.sdk.info.getUserOpenOrders(address);
+    const orders = await this.apiCall(() => this.sdk.info.getUserOpenOrders(address));
     return orders as unknown[];
   }
 
@@ -114,17 +184,17 @@ export class HyperliquidClient {
 
   async getSpotBalances(walletAddress?: string): Promise<HLSpotClearinghouseState> {
     const address = walletAddress ?? this.walletAddress;
-    const state = await this.sdk.info.spot.getSpotClearinghouseState(address);
+    const state = await this.apiCall(() => this.sdk.info.spot.getSpotClearinghouseState(address));
     return state as unknown as HLSpotClearinghouseState;
   }
 
   async getSpotMeta(): Promise<HLSpotMeta> {
-    const meta = await this.sdk.info.spot.getSpotMeta();
+    const meta = await this.apiCall(() => this.sdk.info.spot.getSpotMeta());
     return meta as unknown as HLSpotMeta;
   }
 
   async getSpotMetaAndAssetCtxs(): Promise<[HLSpotMeta, HLSpotAssetCtx[]]> {
-    const result = await this.sdk.info.spot.getSpotMetaAndAssetCtxs();
+    const result = await this.apiCall(() => this.sdk.info.spot.getSpotMetaAndAssetCtxs());
     return result as unknown as [HLSpotMeta, HLSpotAssetCtx[]];
   }
 
@@ -481,7 +551,7 @@ export class HyperliquidClient {
   }
 
   async getAssetInfos(): Promise<HLAssetInfo[]> {
-    const metaAndCtxs = await this.sdk.info.perpetuals.getMetaAndAssetCtxs();
+    const metaAndCtxs = await this.apiCall(() => this.sdk.info.perpetuals.getMetaAndAssetCtxs());
     const [meta, ctxs] = metaAndCtxs as unknown as [HLPerpMeta, HLAssetCtx[]];
 
     return meta.universe.map((u, i) => ({
@@ -498,7 +568,7 @@ export class HyperliquidClient {
   /** Get predicted next funding rates for all assets */
   async getPredictedFundings(): Promise<HLPredictedFunding[]> {
     try {
-      const result = await this.sdk.info.perpetuals.getPredictedFundings();
+      const result = await this.apiCall(() => this.sdk.info.perpetuals.getPredictedFundings());
       return result as unknown as HLPredictedFunding[];
     } catch (err) {
       log.error({ err }, 'Failed to get predicted fundings');
@@ -509,7 +579,7 @@ export class HyperliquidClient {
   /** Get historical funding rates for a specific coin */
   async getFundingHistory(coin: string, startTime: number, endTime?: number): Promise<HLFundingHistoryEntry[]> {
     try {
-      const result = await this.sdk.info.perpetuals.getFundingHistory(coin, startTime, endTime);
+      const result = await this.apiCall(() => this.sdk.info.perpetuals.getFundingHistory(coin, startTime, endTime));
       return result as unknown as HLFundingHistoryEntry[];
     } catch (err) {
       log.error({ err, coin }, 'Failed to get funding history');
@@ -520,7 +590,7 @@ export class HyperliquidClient {
   /** Get assets that have reached their open interest cap */
   async getPerpsAtOpenInterestCap(): Promise<unknown[]> {
     try {
-      const result = await this.sdk.info.perpetuals.getPerpsAtOpenInterestCap();
+      const result = await this.apiCall(() => this.sdk.info.perpetuals.getPerpsAtOpenInterestCap());
       return result as unknown[];
     } catch (err) {
       log.error({ err }, 'Failed to get perps at OI cap');
@@ -536,7 +606,7 @@ export class HyperliquidClient {
   async getUserFills(walletAddress?: string): Promise<HLUserFill[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const fills = await this.sdk.info.getUserFills(address);
+      const fills = await this.apiCall(() => this.sdk.info.getUserFills(address));
       return fills as unknown as HLUserFill[];
     } catch (err) {
       log.error({ err }, 'Failed to get user fills');
@@ -548,7 +618,7 @@ export class HyperliquidClient {
   async getUserFillsByTime(startTime: number, endTime?: number, walletAddress?: string): Promise<HLUserFill[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const fills = await this.sdk.info.getUserFillsByTime(address, startTime, endTime ?? Date.now());
+      const fills = await this.apiCall(() => this.sdk.info.getUserFillsByTime(address, startTime, endTime ?? Date.now()));
       return fills as unknown as HLUserFill[];
     } catch (err) {
       log.error({ err }, 'Failed to get user fills by time');
@@ -560,7 +630,7 @@ export class HyperliquidClient {
   async getUserFunding(startTime: number, endTime?: number, walletAddress?: string): Promise<HLUserFunding[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const funding = await this.sdk.info.perpetuals.getUserFunding(address, startTime, endTime);
+      const funding = await this.apiCall(() => this.sdk.info.perpetuals.getUserFunding(address, startTime, endTime));
       return funding as unknown as HLUserFunding[];
     } catch (err) {
       log.error({ err }, 'Failed to get user funding');
@@ -572,7 +642,7 @@ export class HyperliquidClient {
   async getUserLedger(startTime: number, endTime?: number, walletAddress?: string): Promise<HLLedgerUpdate[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const updates = await this.sdk.info.perpetuals.getUserNonFundingLedgerUpdates(address, startTime, endTime);
+      const updates = await this.apiCall(() => this.sdk.info.perpetuals.getUserNonFundingLedgerUpdates(address, startTime, endTime));
       return updates as unknown as HLLedgerUpdate[];
     } catch (err) {
       log.error({ err }, 'Failed to get user ledger');
@@ -584,7 +654,7 @@ export class HyperliquidClient {
   async getOrderStatus(orderId: number, walletAddress?: string): Promise<HLOrderStatus | null> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const status = await this.sdk.info.getOrderStatus(address, orderId);
+      const status = await this.apiCall(() => this.sdk.info.getOrderStatus(address, orderId));
       return status as unknown as HLOrderStatus;
     } catch (err) {
       log.error({ err, orderId }, 'Failed to get order status');
@@ -596,7 +666,7 @@ export class HyperliquidClient {
   async getUserRateLimit(walletAddress?: string): Promise<unknown> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      return await this.sdk.info.getUserRateLimit(address);
+      return await this.apiCall(() => this.sdk.info.getUserRateLimit(address));
     } catch (err) {
       log.error({ err }, 'Failed to get rate limit');
       return null;
@@ -607,7 +677,7 @@ export class HyperliquidClient {
   async getHistoricalOrders(walletAddress?: string): Promise<unknown[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const orders = await this.sdk.info.getHistoricalOrders(address);
+      const orders = await this.apiCall(() => this.sdk.info.getHistoricalOrders(address));
       return orders as unknown[];
     } catch (err) {
       log.error({ err }, 'Failed to get historical orders');
@@ -658,7 +728,7 @@ export class HyperliquidClient {
   async getTwapHistory(walletAddress?: string): Promise<HLTwapStatus[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const history = await this.sdk.info.twapHistory(address);
+      const history = await this.apiCall(() => this.sdk.info.twapHistory(address));
       return history as unknown as HLTwapStatus[];
     } catch (err) {
       log.error({ err }, 'Failed to get TWAP history');
@@ -674,7 +744,7 @@ export class HyperliquidClient {
   async getPortfolio(walletAddress?: string): Promise<unknown> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      return await this.sdk.info.portfolio(address);
+      return await this.apiCall(() => this.sdk.info.portfolio(address));
     } catch (err) {
       log.error({ err }, 'Failed to get portfolio');
       return null;
@@ -685,7 +755,7 @@ export class HyperliquidClient {
   async getUserFees(walletAddress?: string): Promise<unknown> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      return await this.sdk.info.userFees(address);
+      return await this.apiCall(() => this.sdk.info.userFees(address));
     } catch (err) {
       log.error({ err }, 'Failed to get user fees');
       return null;
@@ -696,7 +766,7 @@ export class HyperliquidClient {
   async getReferral(walletAddress?: string): Promise<unknown> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      return await this.sdk.info.referral(address);
+      return await this.apiCall(() => this.sdk.info.referral(address));
     } catch (err) {
       log.error({ err }, 'Failed to get referral info');
       return null;
@@ -723,7 +793,7 @@ export class HyperliquidClient {
   async getSubAccounts(walletAddress?: string): Promise<unknown[]> {
     try {
       const address = walletAddress ?? this.walletAddress;
-      const subs = await this.sdk.info.getSubAccounts(address);
+      const subs = await this.apiCall(() => this.sdk.info.getSubAccounts(address));
       return subs as unknown[];
     } catch (err) {
       log.error({ err }, 'Failed to get sub-accounts');
@@ -750,7 +820,7 @@ export class HyperliquidClient {
   /** Get vault details */
   async getVaultDetails(vaultAddress: string): Promise<unknown> {
     try {
-      return await this.sdk.info.getVaultDetails(vaultAddress, this.walletAddress);
+      return await this.apiCall(() => this.sdk.info.getVaultDetails(vaultAddress, this.walletAddress));
     } catch (err) {
       log.error({ err, vaultAddress }, 'Failed to get vault details');
       return null;

@@ -49,7 +49,7 @@ export const defaultEquityCrossConfig: EquityCrossConfig = {
   leverage: 3,
   minEquityMovePct: 3, // equity must move >3% to trigger
   scanIntervalMs: 5 * 60 * 1000, // 5 min
-  correlationWindow: 24, // 24 x 1h candles for rolling correlation
+  correlationWindow: 168, // 168 x 1h candles (7 days) for rolling correlation
 };
 
 export const defaultDynamicSymbolConfig: DynamicSymbolConfig = {

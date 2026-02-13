@@ -19,10 +19,22 @@ export class InfoSourceAggregator {
   private coingecko: CoinGeckoSource;
   private lastSignals: InfoSignals | null = null;
 
+  /** Weight multiplier for each source's trigger flag scores */
+  private sourceWeights: Record<string, number> = {
+    polymarket: 1.5,
+    defillama: 1.0,
+    coingecko: 0.8,
+  };
+
   constructor() {
     this.polymarket = new PolymarketSource();
     this.defillama = new DefiLlamaSource();
     this.coingecko = new CoinGeckoSource();
+  }
+
+  /** Get the current source weight configuration */
+  getSourceWeights(): Record<string, number> {
+    return { ...this.sourceWeights };
   }
 
   /**
@@ -45,12 +57,22 @@ export class InfoSourceAggregator {
       }),
     ]);
 
-    // Generate trigger flags from each source
+    // Generate trigger flags from each source and apply source weights
     const polyFlags = this.polymarket.generateTriggerFlags(markets);
     const tvlFlags = this.defillama.generateTriggerFlags(tvl);
     const trendFlags = this.coingecko.generateTriggerFlags(trending);
 
-    const triggerFlags: InfoTriggerFlag[] = [...polyFlags, ...tvlFlags, ...trendFlags];
+    const applyWeight = (flags: InfoTriggerFlag[]): InfoTriggerFlag[] =>
+      flags.map(f => ({
+        ...f,
+        score: Math.round(f.score * (this.sourceWeights[f.source] ?? 1.0)),
+      }));
+
+    const triggerFlags: InfoTriggerFlag[] = [
+      ...applyWeight(polyFlags),
+      ...applyWeight(tvlFlags),
+      ...applyWeight(trendFlags),
+    ];
 
     const signals: InfoSignals = {
       polymarket: markets,

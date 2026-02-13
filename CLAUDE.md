@@ -82,8 +82,8 @@
 | CRIT-6 | 모멘텀 SL 무제한 (`2×ATR` → `min(2×ATR, 5%)` 캡) | `src/strategies/momentum/index.ts:235` | ✅ DONE |
 | CRIT-7 | TP가 raw 3×ATR → SL거리×1.5 R:R로 변경 | `src/strategies/momentum/index.ts:238` | ✅ DONE |
 | CRIT-10 | LLM SL/TP validation (레버리지별 SL 캡 + R:R 1.5 강제) | `src/core/skills/llm-decide.ts:598` | ✅ DONE |
-| WARN-3 | S/R 계산 naive (스윙 포인트 클러스터링으로 교체) | `src/strategies/discretionary/analyzer.ts:122` | ⬜ TODO |
-| WARN-4 | OI 변화 시계열 오염 (타임스탬프 정규화) | `src/strategies/discretionary/analyzer.ts:206` | ⬜ TODO |
+| WARN-3 | S/R 계산 naive (스윙 포인트 클러스터링으로 교체) | `src/strategies/discretionary/analyzer.ts:122` | ✅ DONE |
+| WARN-4 | OI 변화 시계열 오염 (타임스탬프 정규화) | `src/strategies/discretionary/analyzer.ts:206` | ✅ DONE |
 | WARN-5 | Kelly 기본 winRate 보수화 (0.5→0.45, threshold 5→10) | `src/strategies/base.ts:211` | ✅ DONE |
 | WARN-6 | 모멘텀 RSI 방향 확인 추가 (EMA만→RSI>45/55 필터) | `src/strategies/momentum/index.ts:172` | ✅ DONE |
 | WARN-7 | Polymarket 첫 사이클 extreme 감지 + Discretionary risk check | `src/data/sources/polymarket.ts:179` | ✅ DONE |
@@ -93,20 +93,20 @@
 
 | # | 이슈 | 파일 | 상태 |
 |---|------|------|------|
-| SIG-1 | 외부 소스별 예측 정확도 추적 테이블 추가 | `src/data/storage.ts` | ⬜ TODO |
-| SIG-2 | 소스별 가중치 도입 (동일 가중치 → 예측력 비례) | `src/data/sources/index.ts` | ⬜ TODO |
-| SIG-3 | CoinGecko 트렌딩 → "이미 급등" 경고 재분류 | `src/data/sources/coingecko.ts` | ⬜ TODO |
-| SIG-4 | Equity Cross 상관관계 윈도우 2h → 7d | `src/strategies/equity-cross/index.ts` | ⬜ TODO |
+| SIG-1 | 외부 소스별 예측 정확도 추적 테이블 추가 | `src/data/storage.ts` | ✅ DONE |
+| SIG-2 | 소스별 가중치 도입 (동일 가중치 → 예측력 비례) | `src/data/sources/index.ts` | ✅ DONE |
+| SIG-3 | CoinGecko 트렌딩 → "이미 급등" 경고 재분류 | `src/data/sources/coingecko.ts` | ✅ DONE |
+| SIG-4 | Equity Cross 상관관계 윈도우 2h → 7d | `src/config/strategies.ts` | ✅ DONE |
 
 ### Phase 3: 인프라 강화
 
 | # | 이슈 | 파일 | 상태 |
 |---|------|------|------|
-| INFRA-1 | PM2 kill_timeout: 10000, max_memory: 1G | `ecosystem.config.cjs` | ⬜ TODO |
-| INFRA-2 | 모든 HL API에 10초 타임아웃 | `src/exchanges/hyperliquid/client.ts` | ⬜ TODO |
-| INFRA-3 | 전략 시작 전 프리플라이트 체크 | `src/core/engine.ts` | ⬜ TODO |
-| INFRA-4 | 텔레그램 하트비트 + 자동 재연결 | `src/monitoring/telegram.ts` | ⬜ TODO |
-| INFRA-5 | API 실패 서킷 브레이커 (3회 연속 → 일시정지) | `src/exchanges/hyperliquid/client.ts` | ⬜ TODO |
+| INFRA-1 | PM2 kill_timeout: 10000, max_memory: 1G | `ecosystem.config.cjs` | ✅ DONE |
+| INFRA-2 | 모든 HL API에 10초 타임아웃 | `src/exchanges/hyperliquid/client.ts` | ✅ DONE |
+| INFRA-3 | 전략 시작 전 프리플라이트 체크 | `src/core/engine.ts` | ✅ DONE |
+| INFRA-4 | 텔레그램 하트비트 + 자동 재연결 | `src/monitoring/telegram.ts` | ✅ DONE |
+| INFRA-5 | API 실패 서킷 브레이커 (3회 연속 → 일시정지) | `src/exchanges/hyperliquid/client.ts` | ✅ DONE |
 
 ---
 
