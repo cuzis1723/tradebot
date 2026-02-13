@@ -213,7 +213,7 @@ function apiTradeStats(_req: IncomingMessage, res: ServerResponse): void {
 
 function apiDecisions(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '50', 10));
+  const limit = Math.min(500, parseInt(url.searchParams.get('limit') ?? '50', 10));
 
   try {
     const decisions = getRecentDecisions(limit);

@@ -218,24 +218,6 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       </div>
     </div>
 
-    <!-- Chart -->
-    <div class="chart-section">
-      <div class="chart-header">
-        <div class="chart-title" id="chartLabel">Daily PnL</div>
-        <div class="chart-tabs">
-          <div class="chart-toggle-group" id="chartSourceTabs">
-            <button class="chart-tab active" data-source="pnl">PnL</button>
-            <button class="chart-tab" data-source="balance">Balance</button>
-          </div>
-          <div class="chart-toggle-group" id="chartModeTabs">
-            <button class="chart-tab active" data-mode="daily">Daily</button>
-            <button class="chart-tab" data-mode="cumulative">Cumulative</button>
-          </div>
-        </div>
-      </div>
-      <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
-    </div>
-
     <div class="share-watermark" id="shareWatermark">pangjibot &mdash; AI Crypto Trading Bot</div>
   </div>
 
@@ -262,6 +244,24 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     <div class="timeline" id="timeline">
       <div class="tl-empty">Waiting for first analysis...</div>
     </div>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <div class="chart-title" id="chartLabel">Daily PnL</div>
+      <div class="chart-tabs">
+        <div class="chart-toggle-group" id="chartSourceTabs">
+          <button class="chart-tab active" data-source="pnl">PnL</button>
+          <button class="chart-tab" data-source="balance">Balance</button>
+        </div>
+        <div class="chart-toggle-group" id="chartModeTabs">
+          <button class="chart-tab active" data-mode="daily">Daily</button>
+          <button class="chart-tab" data-mode="cumulative">Cumulative</button>
+        </div>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
   </div>
 </div>
 
@@ -704,13 +704,15 @@ function renderTimeline(decisions) {
   $('tlBadge').textContent = decisions.length + ' entries';
   wrap.innerHTML = decisions.map(d => {
     const isUrgent = d.type === 'urgent_trigger';
-    const typeClass = isUrgent ? 'urgent' : 'comprehensive';
+    const isScalp = d.type === 'scalp_trigger';
+    const typeClass = isUrgent || isScalp ? 'urgent' : 'comprehensive';
+    const typeLabel = isScalp ? 'Scalp Trigger' : isUrgent ? 'Urgent Trigger' : 'Comprehensive';
     const hasTrade = d.had_trade === 1;
     let meta = '';
     if (d.regime) meta += `<span class="tl-meta-tag">${d.regime}</span>`;
     if (d.direction) meta += `<span class="tl-meta-tag">${d.direction}</span>`;
     if (d.confidence) meta += `<span class="tl-meta-tag">${d.confidence}%</span>`;
-    if (isUrgent && d.trigger_symbol) meta += `<span class="tl-meta-tag">${d.trigger_symbol} (score ${d.trigger_score})</span>`;
+    if ((isUrgent || isScalp) && d.trigger_symbol) meta += `<span class="tl-meta-tag">${d.trigger_symbol} (score ${d.trigger_score})</span>`;
     let trade = '';
     if (hasTrade && d.trade_symbol) {
       const cls = d.trade_side === 'sell' ? 'sell' : 'buy';
@@ -719,7 +721,7 @@ function renderTimeline(decisions) {
     return `<div class="tl-item" onclick="this.classList.toggle('expanded')">
       <div class="tl-dot ${typeClass}"></div><div class="tl-line"></div>
       <div class="tl-header">
-        <span class="tl-type ${typeClass}">${isUrgent ? 'Urgent Trigger' : 'Comprehensive'}</span>
+        <span class="tl-type ${typeClass}">${typeLabel}</span>
         <span class="tl-time">${fmtTime(d.timestamp)}</span>
       </div>
       <div class="tl-meta">${meta}</div>
@@ -783,7 +785,7 @@ async function refresh() {
   const [status, equity, balance, pnlData, fills, positions, stats, decisions] = await Promise.all([
     fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/balance'),
     fetchJson('/api/daily-pnl?days=90'), fetchJson('/api/fills?limit=50'),
-    fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=30'),
+    fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=500'),
   ]);
   renderAgent(status);
   renderMetrics(equity, balance, fills, stats);
