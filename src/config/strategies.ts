@@ -33,6 +33,7 @@ export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   leverage: 5,
   analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
+  autoExecute: true, // execute immediately without Telegram approval
 };
 
 export const defaultScalpConfig: ScalpConfig = {

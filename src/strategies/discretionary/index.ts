@@ -86,13 +86,32 @@ export class DiscretionaryStrategy extends Strategy {
       }
     }
 
-    this.pendingProposals.set(proposal.id, proposal);
-    this.log.info({ proposal }, 'Trade proposal received from Brain');
-
-    if (this.onProposal) {
-      this.onProposal(proposal, snapshot).catch(err => {
-        this.log.error({ err }, 'Failed to send proposal to Telegram');
+    if (this.config.autoExecute) {
+      // Auto-execute: skip pending queue, execute immediately
+      proposal.status = 'approved';
+      this.log.info({ proposal }, 'Auto-executing trade proposal');
+      this.executeProposal(proposal).then(result => {
+        if (this.onMessage) {
+          const sideIcon = proposal.side === 'buy' ? '🟢 LONG' : '🔴 SHORT';
+          const msg = `⚡ <b>Auto-Executed</b> ${sideIcon} ${proposal.symbol}\n${result}`;
+          this.onMessage(msg).catch(() => {});
+        }
+      }).catch(err => {
+        this.log.error({ err, proposal }, 'Auto-execution failed');
+        if (this.onMessage) {
+          this.onMessage(`❌ Auto-execute failed: ${proposal.symbol} — ${String(err)}`).catch(() => {});
+        }
       });
+    } else {
+      // Manual approval flow
+      this.pendingProposals.set(proposal.id, proposal);
+      this.log.info({ proposal }, 'Trade proposal received from Brain');
+
+      if (this.onProposal) {
+        this.onProposal(proposal, snapshot).catch(err => {
+          this.log.error({ err }, 'Failed to send proposal to Telegram');
+        });
+      }
     }
   }
 

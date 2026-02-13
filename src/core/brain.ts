@@ -510,7 +510,7 @@ export class Brain extends EventEmitter {
                 result.proposal.leverage ?? 3,
                 result.proposal.confidence ?? 'medium',
                 result.proposal.rationale ?? '',
-                'pending',
+                'auto_executed',
                 decisionId,
               );
               updateBrainDecisionTrade(decisionId, proposalDbId);

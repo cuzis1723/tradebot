@@ -179,6 +179,7 @@ export interface DiscretionaryConfig {
   leverage: number;
   analysisIntervalMs: number; // how often to scan for opportunities
   proposalTimeoutMs: number; // how long to wait for user approval
+  autoExecute: boolean; // true = execute immediately without Telegram approval
 }
 
 export interface ScalpConfig {
