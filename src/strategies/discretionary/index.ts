@@ -13,6 +13,7 @@ import type {
   ActiveDiscretionaryPosition,
   StrategyPositionSummary,
 } from '../../core/types.js';
+import type { PositionManagementAction } from '../../core/skills/types.js';
 
 /**
  * Discretionary Strategy v3 — Brain-Driven
@@ -36,6 +37,7 @@ export class DiscretionaryStrategy extends Strategy {
   // Callback to send Telegram messages - set by engine/telegram integration
   public onProposal: ((proposal: TradeProposal, snapshot?: MarketSnapshot) => Promise<void>) | null = null;
   public onMessage: ((msg: string) => Promise<void>) | null = null;
+  public onTradeClose: ((position: ActiveDiscretionaryPosition, closePrice: number, pnl: number) => Promise<void>) | null = null;
 
   constructor(cfg: DiscretionaryConfig) {
     super();
@@ -140,6 +142,72 @@ export class DiscretionaryStrategy extends Strategy {
   async handlePositionsRequest(): Promise<string> {
     if (this.positions.length === 0) return 'No open discretionary positions.';
     return this.formatPositions();
+  }
+
+  // === Position Management (from Brain's managePosition skill) ===
+
+  async handlePositionManagement(action: PositionManagementAction): Promise<string> {
+    const position = this.positions.find(p => p.symbol === action.symbol);
+    if (!position) return `No position found for ${action.symbol}`;
+
+    const hl = getHyperliquidClient();
+
+    switch (action.action) {
+      case 'trail_stop':
+      case 'move_to_breakeven': {
+        const newSl = action.action === 'move_to_breakeven' ? position.entryPrice : action.newStopLoss;
+        if (!newSl) return 'No new SL price provided';
+
+        // Cancel old SL, place new one
+        try {
+          if (position.slOrderId) await hl.cancelOrder(position.symbol, position.slOrderId).catch(() => {});
+          const slResult = await hl.placeTriggerOrder({
+            coin: position.symbol,
+            isBuy: position.side !== 'buy',
+            size: position.size.toString(),
+            triggerPx: newSl.toString(),
+            tpsl: 'sl',
+            reduceOnly: true,
+          });
+          position.stopLoss = newSl;
+          if (slResult.orderId) position.slOrderId = slResult.orderId;
+          this.persistPositions();
+          return `SL updated: ${position.symbol} new SL @ $${newSl.toFixed(2)} (${action.reasoning})`;
+        } catch (err) {
+          this.log.error({ err }, 'Failed to update SL');
+          return `Failed to update SL: ${String(err)}`;
+        }
+      }
+      case 'partial_close': {
+        const closePct = action.partialClosePct ?? 50;
+        const closeSize = position.size * (closePct / 100);
+        try {
+          const result = await hl.placeOrder({
+            coin: position.symbol,
+            isBuy: position.side === 'sell',
+            size: closeSize.toFixed(4),
+            price: '0',
+            orderType: 'market',
+            reduceOnly: true,
+          });
+          position.size -= closeSize;
+          this.persistPositions();
+          const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
+          const pnl = (closePrice - position.entryPrice) * closeSize * (position.side === 'buy' ? 1 : -1);
+          logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, closeSize, 0, pnl);
+          return `Partial close ${closePct}%: ${position.symbol} closed ${closeSize.toFixed(4)} @ $${closePrice.toFixed(2)} PnL: $${pnl.toFixed(2)} (${action.reasoning})`;
+        } catch (err) {
+          this.log.error({ err }, 'Failed to partial close');
+          return `Failed to partial close: ${String(err)}`;
+        }
+      }
+      case 'close_now': {
+        const msg = await this.closePosition(position);
+        return `${msg} (Reason: ${action.reasoning})`;
+      }
+      default:
+        return `Unknown action: ${action.action}`;
+    }
   }
 
   // === Trade Execution ===
@@ -291,6 +359,13 @@ export class DiscretionaryStrategy extends Strategy {
         profit: pnl.toFixed(2),
         totalPnl: this.realizedPnl.toString(),
       });
+
+      // Trigger post-trade review via Brain's skill pipeline
+      if (this.onTradeClose) {
+        this.onTradeClose(position, closePrice, pnl).catch(err => {
+          this.log.debug({ err }, 'Trade review callback failed');
+        });
+      }
 
       return `Position closed: ${position.symbol} @ $${closePrice.toFixed(2)} | PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
     } catch (err) {

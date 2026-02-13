@@ -131,6 +131,45 @@ export class TradingEngine {
       });
     });
 
+    // Wire position management events from Brain
+    this.brain.on('positionManagement', (action: { symbol: string; action: string; newStopLoss?: number; partialClosePct?: number; reasoning: string }) => {
+      const disc = this.strategies.get('discretionary') as import('../strategies/discretionary/index.js').DiscretionaryStrategy | undefined;
+      if (disc) {
+        disc.handlePositionManagement(action as import('./skills/types.js').PositionManagementAction).then(msg => {
+          sendAlert(msg).catch(() => {});
+        }).catch(err => {
+          log.error({ err }, 'Error handling position management action');
+        });
+      }
+    });
+
+    // Wire trade review callback on discretionary position close
+    const discStrategy = this.strategies.get('discretionary') as import('../strategies/discretionary/index.js').DiscretionaryStrategy | undefined;
+    if (discStrategy) {
+      discStrategy.onTradeClose = async (position, closePrice, pnl) => {
+        try {
+          const pipeline = this.brain.getSkillPipeline();
+          const review = await pipeline.runTradeReview(
+            position, closePrice, pnl, this.brain.getState().regime,
+          );
+          if (review) {
+            const icon = review.outcome === 'win' ? '✅' : review.outcome === 'loss' ? '❌' : '➖';
+            const msg = [
+              `<b>${icon} Trade Review: ${position.symbol}</b>`,
+              `Outcome: ${review.outcome.toUpperCase()} (${review.pnlPct.toFixed(2)}%)`,
+              review.whatWorked.length > 0 ? `Worked: ${review.whatWorked.join(', ')}` : '',
+              review.whatFailed.length > 0 ? `Failed: ${review.whatFailed.join(', ')}` : '',
+              `<b>Lesson:</b> ${review.lesson}`,
+              review.improvementSuggestion ? `<i>Improve: ${review.improvementSuggestion}</i>` : '',
+            ].filter(Boolean).join('\n');
+            await sendAlert(msg);
+          }
+        } catch (err) {
+          log.debug({ err }, 'Trade review failed');
+        }
+      };
+    }
+
     // Wire balance accessor to Brain for dynamic balance in LLM prompts
     this.brain.setBalanceAccessor(async () => {
       try {

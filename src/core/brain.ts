@@ -4,6 +4,7 @@ import { MarketScorer } from '../strategies/discretionary/scorer.js';
 import { LLMAdvisor } from '../strategies/discretionary/llm-advisor.js';
 import { InfoSourceAggregator } from '../data/sources/index.js';
 import { SkillPipeline } from './skills/index.js';
+import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { createChildLogger } from '../monitoring/logger.js';
 import { logBrainDecision, updateBrainDecisionTrade, logTradeProposal } from '../data/storage.js';
 import type {
@@ -11,6 +12,7 @@ import type {
   BrainConfig,
   ActiveDiscretionaryPosition,
 } from './types.js';
+import type { PositionManagementAction } from './skills/types.js';
 
 const log = createChildLogger('brain');
 
@@ -388,9 +390,43 @@ export class Brain extends EventEmitter {
         try {
           const positions = this.getPositions();
           const balance = await this.getBalance();
+
+          // Fetch enhanced data for new skills (L2 book, recent fills, candles)
+          let l2Book: { bids: Array<{ px: string; sz: string }>; asks: Array<{ px: string; sz: string }> } | null = null;
+          let recentFills: Array<{ side: string; px: string; sz: string; time: number }> | null = null;
+          let candles4h: Array<{ close: number; open: number }> | null = null;
+          let candles15m: Array<{ close: number; open: number }> | null = null;
+
+          try {
+            const hl = getHyperliquidClient();
+            const coin = score.symbol.replace('-PERP', '');
+
+            const [l2, fills4h, fills15m] = await Promise.all([
+              hl.getL2Book(coin).catch(() => null),
+              this.analyzer.fetchCandles(score.symbol, '4h', 24).catch(() => null),
+              this.analyzer.fetchCandles(score.symbol, '1h', 4).catch(() => null), // Closest to 15m from cache
+            ]);
+
+            l2Book = l2 as typeof l2Book;
+            candles4h = fills4h as typeof candles4h;
+            candles15m = fills15m as typeof candles15m;
+
+            // Try to get recent fills for orderflow
+            const userFills = await hl.getUserFillsByTime(Date.now() - 600_000).catch(() => null);
+            if (userFills && Array.isArray(userFills)) {
+              recentFills = (userFills as Array<{ side: string; px: string; sz: string; time: number }>)
+                .filter((f: { side: string; px: string; sz: string; time: number }) =>
+                  f.time > Date.now() - 600_000
+                );
+            }
+          } catch (dataErr) {
+            log.debug({ dataErr, symbol: score.symbol }, 'Failed to fetch enhanced data for skills');
+          }
+
           const result = await this.skillPipeline.runUrgentDecision(
             score, snapshots, this.state, infoSignals, positions, balance,
             this.scorer.getConsecutiveLosses(),
+            l2Book, recentFills, candles4h, candles15m,
           );
 
           if (result.action === 'propose_trade' && result.proposal) {
@@ -456,9 +492,48 @@ export class Brain extends EventEmitter {
         }
       }
     }
+
+    // Position management: check open positions for dynamic management actions
+    try {
+      const positions = this.getPositions();
+      if (positions.length > 0 && snapshots.length > 0) {
+        const actions = await this.skillPipeline.runPositionManagement(
+          positions, snapshots, this.state.regime, this.state.direction,
+        );
+        for (const action of actions) {
+          this.emit('positionManagement', action);
+          this.emit('alert', this.formatPositionAction(action));
+        }
+      }
+    } catch (err) {
+      log.debug({ err }, 'Position management check failed');
+    }
   }
 
   // ========== Helpers ==========
+
+  /** Get skill pipeline for trade review integration */
+  getSkillPipeline(): SkillPipeline {
+    return this.skillPipeline;
+  }
+
+  private formatPositionAction(action: PositionManagementAction): string {
+    const actionIcons: Record<string, string> = {
+      trail_stop: '📐',
+      partial_close: '✂️',
+      move_to_breakeven: '🔒',
+      close_now: '🚨',
+    };
+    const icon = actionIcons[action.action] ?? '📋';
+    const lines = [
+      `<b>${icon} Position Management: ${action.symbol}</b>`,
+      `Action: <b>${action.action.replace(/_/g, ' ').toUpperCase()}</b>`,
+    ];
+    if (action.newStopLoss !== undefined) lines.push(`New SL: $${action.newStopLoss.toFixed(2)}`);
+    if (action.partialClosePct !== undefined) lines.push(`Close: ${action.partialClosePct}%`);
+    lines.push(`<i>${action.reasoning}</i>`);
+    return lines.join('\n');
+  }
 
   private formatStateUpdate(): string {
     const regimeIcon: Record<string, string> = {

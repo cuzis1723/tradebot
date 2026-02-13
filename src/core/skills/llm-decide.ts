@@ -4,12 +4,13 @@
  * decideTrade: Urgent trigger → single LLM call with code-skill summaries
  * assessRegime: 30-min comprehensive → market regime + directives
  */
-import type { MarketSnapshot, TradeProposal, OrderSide, MarketRegime, MarketDirection } from '../types.js';
+import type { MarketSnapshot, TradeProposal, OrderSide, MarketRegime, MarketDirection, ActiveDiscretionaryPosition } from '../types.js';
 import type { ComprehensiveResponse } from '../../strategies/discretionary/llm-advisor.js';
-import type { DecisionContext, CritiqueResult } from './types.js';
+import type { DecisionContext, CritiqueResult, TradeReviewResult, PositionManagementAction, ScenarioAnalysis } from './types.js';
 import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
 import { randomUUID } from 'crypto';
 import { createChildLogger } from '../../monitoring/logger.js';
+import { logTradeLesson } from '../../data/storage.js';
 
 const log = createChildLogger('llm-decide');
 
@@ -130,6 +131,9 @@ export async function decideTrade(
     ...(targetSnapshot.oiChange1h !== undefined && { oi_change_1h: `${targetSnapshot.oiChange1h.toFixed(2)}%` }),
   };
 
+  // Build enhanced prompt sections from new skills
+  const enhancedSections = buildEnhancedPromptSections(decision);
+
   // Assemble the focused prompt
   const prompt = [
     `=== CONTEXT ===`,
@@ -144,11 +148,14 @@ export async function decideTrade(
     `=== RISK ===`,
     decision.risk.summary,
     ``,
+    // Inject enhanced skill data
+    ...enhancedSections,
+    enhancedSections.length > 0 ? `` : '',
     `=== PRICE DATA (${targetSnapshot.symbol}) ===`,
     JSON.stringify(snapshotData, null, 2),
     ``,
-    `DECIDE: Trade or no trade? JSON only.`,
-  ].join('\n');
+    `DECIDE: Trade or no trade? Factor in ALL context including liquidity, orderflow, confluence, past lessons, and narrative trends. JSON only.`,
+  ].filter(Boolean).join('\n');
 
   try {
     const response = await advisor.callWithSystemPrompt(
@@ -584,6 +591,289 @@ export function mergeRegimeAssessments(
 }
 
 // ============================================================
+// LLM Skill: managePosition — Dynamic position management
+// ============================================================
+
+const MANAGE_POSITION_SYSTEM_PROMPT = `You are the position manager of a crypto perpetual futures trading bot on Hyperliquid.
+
+## Your Job
+Review an OPEN position and decide the optimal management action.
+You are NOT opening new trades — only managing existing ones.
+
+## Actions You Can Take
+1. "hold" — Keep current SL/TP, no change needed
+2. "trail_stop" — Move stop loss to lock in profit (provide new SL price)
+3. "partial_close" — Take partial profit (provide % to close, e.g. 50)
+4. "move_to_breakeven" — Move SL to entry price (risk-free position)
+5. "close_now" — Close entire position immediately (conditions deteriorated)
+
+## Decision Rules
+- Position up 1R+ (profit >= risk distance): Consider moving SL to breakeven
+- Position up 1.5R+: Consider partial close (50%) + trail rest
+- Market regime changed against position: Consider close_now
+- RSI reversed against position (was oversold→overbought or vice versa): Trail or close
+- Volume dying after entry: Position may be stalling, consider tighter stop
+- If in doubt, "hold" — avoid over-managing
+
+## Response: JSON only, no markdown.
+{
+  "action": "trail_stop",
+  "new_stop_loss": 2520.00,
+  "partial_close_pct": null,
+  "reasoning": "Position up 1.2R, moving SL to breakeven+0.5% to protect gains while allowing room for TP"
+}`;
+
+export async function managePosition(
+  advisor: LLMAdvisor,
+  position: ActiveDiscretionaryPosition,
+  currentSnapshot: MarketSnapshot | undefined,
+  regime: string,
+  direction: string,
+): Promise<PositionManagementAction | null> {
+  if (!advisor.isAvailable() || !currentSnapshot) return null;
+
+  const currentPrice = currentSnapshot.price;
+  const unrealizedPnl = (currentPrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
+  const riskDistance = Math.abs(position.entryPrice - position.stopLoss);
+  const currentR = riskDistance > 0 ? unrealizedPnl / (riskDistance * position.size) : 0;
+  const holdMinutes = Math.floor((Date.now() - position.openedAt) / 60_000);
+
+  const prompt = [
+    `=== OPEN POSITION ===`,
+    `Symbol: ${position.symbol} | Side: ${position.side.toUpperCase()} | Leverage: ${position.leverage}x`,
+    `Entry: $${position.entryPrice} | Current: $${currentPrice}`,
+    `SL: $${position.stopLoss} | TP: $${position.takeProfit}`,
+    `Unrealized PnL: $${unrealizedPnl.toFixed(2)} (${currentR.toFixed(2)}R)`,
+    `Held: ${holdMinutes}min`,
+    ``,
+    `=== MARKET CONDITIONS ===`,
+    `Regime: ${regime} | Direction: ${direction}`,
+    `RSI: ${currentSnapshot.rsi14.toFixed(1)} | Trend: ${currentSnapshot.trend}`,
+    `EMA9: ${currentSnapshot.ema9.toFixed(2)} | EMA21: ${currentSnapshot.ema21.toFixed(2)}`,
+    `ATR: ${currentSnapshot.atr14.toFixed(2)}`,
+    currentSnapshot.volumeRatio !== undefined ? `Volume Ratio: ${currentSnapshot.volumeRatio.toFixed(2)}x` : '',
+    ``,
+    `MANAGE: What action should be taken? JSON only.`,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const response = await advisor.callWithSystemPrompt(
+      MANAGE_POSITION_SYSTEM_PROMPT,
+      prompt,
+      'skill_manage_position',
+    );
+    return parseManagePositionResponse(response, position.symbol);
+  } catch (err) {
+    log.error({ err }, 'managePosition LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// LLM Skill: reviewTrade — Post-trade analysis & learning
+// ============================================================
+
+const REVIEW_TRADE_SYSTEM_PROMPT = `You are the trade reviewer of a crypto perpetual futures trading bot.
+
+## Your Job
+After a trade closes, analyze what happened and extract lessons for future trades.
+
+## What You Evaluate
+1. Was the entry signal accurate? Which indicators were right/wrong?
+2. Was the exit optimal or could it have been better?
+3. Was leverage appropriate for the setup?
+4. What external factors affected the trade that weren't in the original analysis?
+5. What should be done differently next time in a similar setup?
+
+## Response: JSON only, no markdown.
+{
+  "outcome": "win",
+  "pnl_pct": 3.5,
+  "what_worked": ["RSI reversal signal was accurate", "External intel confirmed direction"],
+  "what_failed": ["TP was too aggressive, price reversed 1% before reaching it"],
+  "signal_accuracy": [
+    {"signal": "RSI oversold", "accurate": true},
+    {"signal": "EMA cross", "accurate": true},
+    {"signal": "Volume surge", "accurate": false}
+  ],
+  "lesson": "RSI extreme + EMA cross is a reliable combo for this symbol. Set TP at 1.5R instead of 2R for faster exits.",
+  "improvement_suggestion": "Consider partial take-profit at 1R to secure gains while letting rest run"
+}`;
+
+export async function reviewTrade(
+  advisor: LLMAdvisor,
+  position: ActiveDiscretionaryPosition,
+  closePrice: number,
+  pnl: number,
+  entryContext: string | null,
+  regime: string,
+): Promise<TradeReviewResult | null> {
+  if (!advisor.isAvailable()) return null;
+
+  const pnlPct = ((closePrice - position.entryPrice) / position.entryPrice) * 100 * (position.side === 'buy' ? 1 : -1);
+  const holdMinutes = Math.floor((Date.now() - position.openedAt) / 60_000);
+
+  const prompt = [
+    `=== CLOSED TRADE ===`,
+    `Symbol: ${position.symbol} | Side: ${position.side.toUpperCase()} | Leverage: ${position.leverage}x`,
+    `Entry: $${position.entryPrice} | Close: $${closePrice}`,
+    `SL was: $${position.stopLoss} | TP was: $${position.takeProfit}`,
+    `PnL: $${pnl.toFixed(2)} (${pnlPct.toFixed(2)}%)`,
+    `Held: ${holdMinutes}min | Regime at entry: ${regime}`,
+    ``,
+    entryContext ? `=== ENTRY CONTEXT ===\n${entryContext}\n` : '',
+    `REVIEW: Analyze this trade and extract lessons. JSON only.`,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const response = await advisor.callWithSystemPrompt(
+      REVIEW_TRADE_SYSTEM_PROMPT,
+      prompt,
+      'skill_review_trade',
+    );
+    const result = parseReviewResponse(response);
+    if (result) {
+      // Persist lesson to DB
+      try {
+        logTradeLesson(
+          position.symbol,
+          position.side,
+          position.side === 'buy' ? 'long' : 'short',
+          position.entryPrice,
+          closePrice,
+          pnl,
+          pnlPct,
+          position.leverage,
+          result.outcome,
+          result.whatWorked.join('; '),
+          result.whatFailed.join('; '),
+          result.lesson,
+          JSON.stringify(result.signalAccuracy),
+          result.improvementSuggestion,
+          regime,
+          null,
+        );
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to persist trade lesson');
+      }
+    }
+    return result;
+  } catch (err) {
+    log.error({ err }, 'reviewTrade LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// LLM Skill: planScenarios — Pre-trade scenario analysis
+// ============================================================
+
+const PLAN_SCENARIOS_SYSTEM_PROMPT = `You are the scenario planner for a crypto perpetual futures trading bot.
+
+## Your Job
+Before a high-conviction trade executes, model 3 possible outcomes to stress-test the thesis.
+
+## Scenarios to Model
+1. **Bull case**: What if the trade goes perfectly?
+2. **Base case**: Most likely outcome given current conditions
+3. **Bear case**: What could go wrong? How bad could it get?
+
+For each scenario, estimate:
+- Probability (must sum to ~100%)
+- Price target (where would price go?)
+- Position outcome (hit TP, hit SL, partial fill, etc.)
+- PnL estimate in USD
+
+## Final Assessment
+- Is the worst case acceptable given position size and leverage?
+- Overall: proceed / reduce size / abort
+
+## Response: JSON only, no markdown.
+{
+  "scenarios": [
+    {"name": "Bull", "probability": 30, "price_target": 2650, "position_outcome": "TP hit", "pnl_estimate": 45.00},
+    {"name": "Base", "probability": 50, "price_target": 2550, "position_outcome": "Partial profit, manual close", "pnl_estimate": 15.00},
+    {"name": "Bear", "probability": 20, "price_target": 2420, "position_outcome": "SL hit", "pnl_estimate": -25.00}
+  ],
+  "worst_case_acceptable": true,
+  "overall_assessment": "Expected value positive (+$12.50). Worst case -$25 is within risk limits. Proceed."
+}`;
+
+export async function planScenarios(
+  advisor: LLMAdvisor,
+  proposal: TradeProposal,
+  decision: DecisionContext,
+  snapshot: MarketSnapshot | undefined,
+): Promise<ScenarioAnalysis | null> {
+  if (!advisor.isAvailable() || !snapshot) return null;
+
+  const prompt = [
+    `=== PROPOSED TRADE ===`,
+    `Symbol: ${proposal.symbol} | Side: ${proposal.side.toUpperCase()}`,
+    `Entry: $${proposal.entryPrice} | SL: $${proposal.stopLoss} | TP: $${proposal.takeProfit}`,
+    `Leverage: ${proposal.leverage}x | Size: ${(proposal.size * 100).toFixed(0)}% of capital`,
+    `Confidence: ${proposal.confidence} | R:R: ${proposal.riskRewardRatio.toFixed(1)}`,
+    ``,
+    `=== CONTEXT ===`,
+    decision.context.summary,
+    decision.signal.summary,
+    decision.external.summary,
+    decision.risk.summary,
+    ``,
+    `=== CURRENT MARKET ===`,
+    `Price: $${snapshot.price} | RSI: ${snapshot.rsi14.toFixed(1)} | Trend: ${snapshot.trend}`,
+    `ATR: ${snapshot.atr14.toFixed(2)} | Funding: ${(snapshot.fundingRate * 100).toFixed(4)}%/h`,
+    ``,
+    `MODEL 3 scenarios (Bull/Base/Bear). JSON only.`,
+  ].join('\n');
+
+  try {
+    const response = await advisor.callWithSystemPrompt(
+      PLAN_SCENARIOS_SYSTEM_PROMPT,
+      prompt,
+      'skill_plan_scenarios',
+    );
+    return parseScenarioResponse(response);
+  } catch (err) {
+    log.error({ err }, 'planScenarios LLM call failed');
+    return null;
+  }
+}
+
+// ============================================================
+// Enhanced decideTrade: Inject new skill summaries into prompt
+// ============================================================
+
+/**
+ * Build enhanced prompt sections from new skills.
+ * Used by decideTrade to include liquidity, orderflow, confluence, lessons, narratives.
+ */
+export function buildEnhancedPromptSections(decision: DecisionContext): string[] {
+  const parts: string[] = [];
+
+  if (decision.liquidity?.hasSignal) {
+    parts.push(`=== LIQUIDITY ===`, decision.liquidity.summary);
+  }
+  if (decision.portfolioCorrelation?.hasSignal) {
+    parts.push(`=== PORTFOLIO CORRELATION ===`, decision.portfolioCorrelation.summary);
+  }
+  if (decision.orderflow?.hasSignal) {
+    parts.push(`=== ORDERFLOW ===`, decision.orderflow.summary);
+  }
+  if (decision.timeframeConfluence?.hasSignal) {
+    parts.push(`=== TIMEFRAME CONFLUENCE ===`, decision.timeframeConfluence.summary);
+  }
+  if (decision.lessons?.hasSignal) {
+    parts.push(`=== PAST LESSONS ===`, decision.lessons.summary);
+  }
+  if (decision.narrativeEvolution?.hasSignal) {
+    parts.push(`=== NARRATIVE TRENDS ===`, decision.narrativeEvolution.summary);
+  }
+
+  return parts;
+}
+
+// ============================================================
 // Response Parsing
 // ============================================================
 
@@ -686,6 +976,86 @@ function parseCritiqueResponse(response: string): CritiqueResult | null {
     };
   } catch {
     log.warn({ response: response.slice(0, 200) }, 'Failed to parse critique response');
+    return null;
+  }
+}
+
+function parseManagePositionResponse(response: string, symbol: string): PositionManagementAction | null {
+  try {
+    let jsonStr = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+    const data = JSON.parse(jsonStr);
+    const validActions = ['hold', 'trail_stop', 'partial_close', 'move_to_breakeven', 'close_now'];
+    const action = validActions.includes(data.action) ? data.action : 'hold';
+
+    return {
+      symbol,
+      action,
+      newStopLoss: data.new_stop_loss ?? undefined,
+      partialClosePct: data.partial_close_pct ?? undefined,
+      reasoning: data.reasoning ?? '',
+    };
+  } catch {
+    log.warn({ response: response.slice(0, 200) }, 'Failed to parse manage position response');
+    return null;
+  }
+}
+
+function parseReviewResponse(response: string): TradeReviewResult | null {
+  try {
+    let jsonStr = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+    const data = JSON.parse(jsonStr);
+
+    return {
+      outcome: data.outcome ?? 'breakeven',
+      pnlPct: data.pnl_pct ?? 0,
+      whatWorked: Array.isArray(data.what_worked) ? data.what_worked : [],
+      whatFailed: Array.isArray(data.what_failed) ? data.what_failed : [],
+      signalAccuracy: Array.isArray(data.signal_accuracy)
+        ? data.signal_accuracy.map((s: { signal?: string; accurate?: boolean }) => ({
+          signal: s.signal ?? '',
+          accurate: s.accurate ?? false,
+        }))
+        : [],
+      lesson: data.lesson ?? '',
+      improvementSuggestion: data.improvement_suggestion ?? '',
+    };
+  } catch {
+    log.warn({ response: response.slice(0, 200) }, 'Failed to parse review response');
+    return null;
+  }
+}
+
+function parseScenarioResponse(response: string): ScenarioAnalysis | null {
+  try {
+    let jsonStr = response;
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1].trim();
+
+    const data = JSON.parse(jsonStr);
+
+    const scenarios = Array.isArray(data.scenarios)
+      ? data.scenarios.map((s: { name?: string; probability?: number; price_target?: number; position_outcome?: string; pnl_estimate?: number }) => ({
+        name: s.name ?? 'Unknown',
+        probability: s.probability ?? 33,
+        priceTarget: s.price_target ?? 0,
+        positionOutcome: s.position_outcome ?? '',
+        pnlEstimate: s.pnl_estimate ?? 0,
+      }))
+      : [];
+
+    return {
+      scenarios,
+      worstCaseAcceptable: data.worst_case_acceptable ?? true,
+      overallAssessment: data.overall_assessment ?? '',
+    };
+  } catch {
+    log.warn({ response: response.slice(0, 200) }, 'Failed to parse scenario response');
     return null;
   }
 }
