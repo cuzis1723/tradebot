@@ -63,7 +63,7 @@ export class Brain extends EventEmitter {
   private skillPipeline: SkillPipeline;
   private state: MarketState;
 
-  private comprehensiveInterval: ReturnType<typeof setInterval> | null = null;
+  private comprehensiveTimeout: ReturnType<typeof setTimeout> | null = null;
   private urgentInterval: ReturnType<typeof setInterval> | null = null;
   private dailyResetTime = 0;
 
@@ -111,12 +111,8 @@ export class Brain extends EventEmitter {
     // Initialize LLM advisor
     await this.advisor.init();
 
-    // 30-min comprehensive loop
-    this.comprehensiveInterval = setInterval(() => {
-      this.runComprehensiveAnalysis().catch(err => {
-        log.error({ err }, 'Comprehensive analysis error');
-      });
-    }, this.config.comprehensiveIntervalMs);
+    // 30-min comprehensive loop — aligned to clock :00/:30
+    this.scheduleNextComprehensive();
 
     // 5-min urgent scan loop
     this.urgentInterval = setInterval(() => {
@@ -134,9 +130,9 @@ export class Brain extends EventEmitter {
 
   /** Stop both loops */
   stop(): void {
-    if (this.comprehensiveInterval) {
-      clearInterval(this.comprehensiveInterval);
-      this.comprehensiveInterval = null;
+    if (this.comprehensiveTimeout) {
+      clearTimeout(this.comprehensiveTimeout);
+      this.comprehensiveTimeout = null;
     }
     if (this.urgentInterval) {
       clearInterval(this.urgentInterval);
@@ -200,6 +196,28 @@ export class Brain extends EventEmitter {
   }
 
   // ========== 30-MIN COMPREHENSIVE ANALYSIS ==========
+
+  /**
+   * Schedule comprehensive analysis at the next clock :00 or :30.
+   * Uses setTimeout → re-schedule pattern so it always aligns to wall-clock.
+   */
+  private scheduleNextComprehensive(): void {
+    const now = Date.now();
+    const msInHalfHour = 30 * 60_000;
+    const msSinceEpochHalf = now % msInHalfHour;
+    const delay = msInHalfHour - msSinceEpochHalf;
+
+    const nextRun = new Date(now + delay);
+    log.info({ nextRun: nextRun.toISOString(), delayMs: delay }, 'Comprehensive analysis scheduled');
+
+    this.comprehensiveTimeout = setTimeout(() => {
+      this.runComprehensiveAnalysis().catch(err => {
+        log.error({ err }, 'Comprehensive analysis error');
+      }).finally(() => {
+        this.scheduleNextComprehensive();
+      });
+    }, delay);
+  }
 
   async runComprehensiveAnalysis(): Promise<void> {
     const now = Date.now();
