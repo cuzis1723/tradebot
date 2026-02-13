@@ -78,16 +78,16 @@
 
 | # | 이슈 | 파일 | 상태 |
 |---|------|------|------|
-| CRIT-5 | Scorer 충돌 페널티가 신호 파괴 (`min(L,S)` → `-1`로) | `src/strategies/discretionary/scorer.ts:242` | ⬜ TODO |
-| CRIT-6 | 모멘텀 SL 무제한 (`2×ATR` → `min(2×ATR, 5%)` 캡) | `src/strategies/momentum/index.ts:235` | ⬜ TODO |
-| CRIT-7 | TP가 currentPrice 기준 (entryPrice 기준으로 변경) | `src/strategies/momentum/index.ts:238` | ⬜ TODO |
-| CRIT-10 | LLM SL 규칙과 코드 불일치 (validation 추가) | `src/core/skills/llm-decide.ts:44` | ⬜ TODO |
+| CRIT-5 | Scorer 충돌 페널티가 신호 파괴 (`min(L,S)` → 고정 `-2`로) | `src/strategies/discretionary/scorer.ts:242` | ✅ DONE |
+| CRIT-6 | 모멘텀 SL 무제한 (`2×ATR` → `min(2×ATR, 5%)` 캡) | `src/strategies/momentum/index.ts:235` | ✅ DONE |
+| CRIT-7 | TP가 raw 3×ATR → SL거리×1.5 R:R로 변경 | `src/strategies/momentum/index.ts:238` | ✅ DONE |
+| CRIT-10 | LLM SL/TP validation (레버리지별 SL 캡 + R:R 1.5 강제) | `src/core/skills/llm-decide.ts:598` | ✅ DONE |
 | WARN-3 | S/R 계산 naive (스윙 포인트 클러스터링으로 교체) | `src/strategies/discretionary/analyzer.ts:122` | ⬜ TODO |
 | WARN-4 | OI 변화 시계열 오염 (타임스탬프 정규화) | `src/strategies/discretionary/analyzer.ts:206` | ⬜ TODO |
-| WARN-5 | Kelly 기본값 낙관적 (b=1.5 → b=1.0) | `src/strategies/base.ts:212` | ⬜ TODO |
-| WARN-6 | 모멘텀 쿨다운 과도 (4h → 1-2h) | `src/strategies/momentum/index.ts:45` | ⬜ TODO |
-| WARN-7 | ADX 기간 부적절 (14 on 1h → 7-10) | `src/strategies/momentum/index.ts:146` | ⬜ TODO |
-| WARN-9 | 연속 손실 쿨다운 비동기 (base vs scorer) | `src/strategies/base.ts:79` | ⬜ TODO |
+| WARN-5 | Kelly 기본 winRate 보수화 (0.5→0.45, threshold 5→10) | `src/strategies/base.ts:211` | ✅ DONE |
+| WARN-6 | 모멘텀 RSI 방향 확인 추가 (EMA만→RSI>45/55 필터) | `src/strategies/momentum/index.ts:172` | ✅ DONE |
+| WARN-7 | Polymarket 첫 사이클 extreme 감지 + Discretionary risk check | `src/data/sources/polymarket.ts:179` | ✅ DONE |
+| WARN-9 | DefiLlama inter-poll delta 임계값 3%로 조정 | `src/data/sources/defillama.ts:137` | ✅ DONE |
 
 ### Phase 2: 시그널 검증
 

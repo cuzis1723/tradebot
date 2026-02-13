@@ -159,6 +159,13 @@ export class DiscretionaryStrategy extends Strategy {
     const capitalForTrade = this.allocatedCapital.mul(effectiveSize).mul(this.lossSizeMultiplier);
     const sizeInUnits = capitalForTrade.mul(proposal.leverage).div(proposal.entryPrice);
     const sz = parseFloat(sizeInUnits.toFixed(4));
+    const notional = capitalForTrade.mul(proposal.leverage).toNumber();
+
+    // WARN-6: Cross-exposure check before execution
+    if (!this.canOpenPosition(proposal.symbol, notional)) {
+      this.log.warn({ symbol: proposal.symbol, notional }, 'Proposal blocked by cross-exposure limit');
+      return `Execution blocked: cross-exposure limit exceeded for ${proposal.symbol}`;
+    }
 
     try {
       await hl.updateLeverage(proposal.symbol, proposal.leverage);

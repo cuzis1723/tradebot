@@ -176,13 +176,13 @@ export class PolymarketSource {
     const flags: InfoTriggerFlag[] = [];
 
     for (const market of markets) {
-      if (market.prevProbability === undefined) continue;
-
-      const probDelta = market.probability - market.prevProbability;
+      // WARN-7: Don't skip first cycle entirely — still check extremes below
+      const hasPrev = market.prevProbability !== undefined;
+      const probDelta = hasPrev ? market.probability - market.prevProbability! : 0;
       const absDelta = Math.abs(probDelta);
 
-      // Significant probability shift (>10% in one scan period)
-      if (absDelta >= 0.10) {
+      // Significant probability shift (>10% in one scan period) — requires prev data
+      if (hasPrev && absDelta >= 0.10) {
         for (const symbol of market.relevantSymbols) {
           flags.push({
             source: 'polymarket',
@@ -190,7 +190,7 @@ export class PolymarketSource {
             score: absDelta >= 0.20 ? 4 : 3,
             direction: this.inferDirection(market, probDelta),
             relevantSymbol: symbol,
-            detail: `Polymarket "${market.question.slice(0, 60)}": ${(market.prevProbability * 100).toFixed(0)}% → ${(market.probability * 100).toFixed(0)}% (${probDelta > 0 ? '+' : ''}${(probDelta * 100).toFixed(1)}%)`,
+            detail: `Polymarket "${market.question.slice(0, 60)}": ${(market.prevProbability! * 100).toFixed(0)}% → ${(market.probability * 100).toFixed(0)}% (${probDelta > 0 ? '+' : ''}${(probDelta * 100).toFixed(1)}%)`,
           });
         }
       }

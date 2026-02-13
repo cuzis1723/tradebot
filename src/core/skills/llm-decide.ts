@@ -596,18 +596,52 @@ function parseTradeResponse(response: string): { action: string; proposal?: Trad
     const data = JSON.parse(jsonStr);
 
     if (data.action === 'propose_trade') {
+      const leverage = Math.min(15, data.leverage ?? 3);
+      const entryPrice = data.entry_price;
+      const sl = data.stop_loss;
+      const tp = data.take_profit;
+
+      // CRIT-10: Validate SL distance matches leverage rules
+      // Max SL % per leverage tier: 10-15x → 2%, 5-10x → 3%, 3-5x → 5%, <3x → 8%
+      const slPct = Math.abs(entryPrice - sl) / entryPrice * 100;
+      let maxSlPct: number;
+      if (leverage >= 10) maxSlPct = 2;
+      else if (leverage >= 5) maxSlPct = 3;
+      else if (leverage >= 3) maxSlPct = 5;
+      else maxSlPct = 8;
+
+      // Clamp SL if it exceeds the max for this leverage
+      let clampedSl = sl;
+      if (slPct > maxSlPct) {
+        const slDir = sl < entryPrice ? -1 : 1;
+        clampedSl = entryPrice + slDir * entryPrice * (maxSlPct / 100);
+        log.warn({ symbol: data.symbol, originalSl: sl, clampedSl, leverage, slPct: slPct.toFixed(2), maxSlPct }, 'SL clamped to match leverage rules');
+      }
+
+      // Validate R:R >= 1.5
+      const slDist = Math.abs(entryPrice - clampedSl);
+      const tpDist = Math.abs(tp - entryPrice);
+      const rr = slDist > 0 ? tpDist / slDist : 0;
+      // If R:R < 1.5, adjust TP to meet minimum
+      let clampedTp = tp;
+      if (rr < 1.5 && slDist > 0) {
+        const tpDir = tp > entryPrice ? 1 : -1;
+        clampedTp = entryPrice + tpDir * slDist * 1.5;
+        log.warn({ symbol: data.symbol, originalTp: tp, clampedTp, rr: rr.toFixed(2) }, 'TP adjusted for min 1.5:1 R:R');
+      }
+
       const proposal: TradeProposal = {
         id: randomUUID(),
         symbol: data.symbol,
         side: data.side as OrderSide,
-        entryPrice: data.entry_price,
+        entryPrice,
         size: data.size_pct / 100,
-        stopLoss: data.stop_loss,
-        takeProfit: data.take_profit,
-        leverage: Math.min(15, data.leverage ?? 3),
+        stopLoss: clampedSl,
+        takeProfit: clampedTp,
+        leverage,
         rationale: data.rationale,
         confidence: data.confidence ?? 'medium',
-        riskRewardRatio: Math.abs(data.take_profit - data.entry_price) / Math.abs(data.entry_price - data.stop_loss),
+        riskRewardRatio: slDist > 0 ? Math.abs(clampedTp - entryPrice) / slDist : 1.5,
         status: 'pending',
         createdAt: Date.now(),
         expiresAt: Date.now() + 300_000,
