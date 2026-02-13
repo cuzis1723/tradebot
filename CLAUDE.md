@@ -59,6 +59,57 @@
 
 ---
 
+## TODO: 감사 결과 수정 사항 (2026-02-13)
+
+> 전체 감사 리포트: `docs/audit-report-2026-02-13.md`
+
+### Phase 0: 메인넷 전 필수 (BLOCKING)
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| CRIT-1 | 마진 계산 틀림 (notional을 margin으로 오인) | `src/core/skills/code-skills.ts:232` | ⬜ TODO |
+| CRIT-2 | Discretionary SL/TP가 거래소 주문 아님 (메모리만) | `src/strategies/discretionary/index.ts:169` | ⬜ TODO |
+| CRIT-3 | Discretionary 포지션 DB 미저장 (PM2 재시작 시 유실) | `src/strategies/discretionary/index.ts:34` | ⬜ TODO |
+| CRIT-4 | 크로스 레버리지 캡 없음 (총 노셔널 무제한) | `src/core/risk-manager.ts:138` | ⬜ TODO |
+| CRIT-8 | /do 명령 무제한 LLM 실행 (위험 도구 접근) | `src/monitoring/telegram.ts` | ⬜ TODO |
+| CRIT-9 | 대시보드 인증 없음 (CORS *, API 키 없음) | `src/dashboard/server.ts:39` | ⬜ TODO |
+
+### Phase 1: 수학/알고리즘 수정
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| CRIT-5 | Scorer 충돌 페널티가 신호 파괴 (`min(L,S)` → `-1`로) | `src/strategies/discretionary/scorer.ts:242` | ⬜ TODO |
+| CRIT-6 | 모멘텀 SL 무제한 (`2×ATR` → `min(2×ATR, 5%)` 캡) | `src/strategies/momentum/index.ts:235` | ⬜ TODO |
+| CRIT-7 | TP가 currentPrice 기준 (entryPrice 기준으로 변경) | `src/strategies/momentum/index.ts:238` | ⬜ TODO |
+| CRIT-10 | LLM SL 규칙과 코드 불일치 (validation 추가) | `src/core/skills/llm-decide.ts:44` | ⬜ TODO |
+| WARN-3 | S/R 계산 naive (스윙 포인트 클러스터링으로 교체) | `src/strategies/discretionary/analyzer.ts:122` | ⬜ TODO |
+| WARN-4 | OI 변화 시계열 오염 (타임스탬프 정규화) | `src/strategies/discretionary/analyzer.ts:206` | ⬜ TODO |
+| WARN-5 | Kelly 기본값 낙관적 (b=1.5 → b=1.0) | `src/strategies/base.ts:212` | ⬜ TODO |
+| WARN-6 | 모멘텀 쿨다운 과도 (4h → 1-2h) | `src/strategies/momentum/index.ts:45` | ⬜ TODO |
+| WARN-7 | ADX 기간 부적절 (14 on 1h → 7-10) | `src/strategies/momentum/index.ts:146` | ⬜ TODO |
+| WARN-9 | 연속 손실 쿨다운 비동기 (base vs scorer) | `src/strategies/base.ts:79` | ⬜ TODO |
+
+### Phase 2: 시그널 검증
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| SIG-1 | 외부 소스별 예측 정확도 추적 테이블 추가 | `src/data/storage.ts` | ⬜ TODO |
+| SIG-2 | 소스별 가중치 도입 (동일 가중치 → 예측력 비례) | `src/data/sources/index.ts` | ⬜ TODO |
+| SIG-3 | CoinGecko 트렌딩 → "이미 급등" 경고 재분류 | `src/data/sources/coingecko.ts` | ⬜ TODO |
+| SIG-4 | Equity Cross 상관관계 윈도우 2h → 7d | `src/strategies/equity-cross/index.ts` | ⬜ TODO |
+
+### Phase 3: 인프라 강화
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| INFRA-1 | PM2 kill_timeout: 10000, max_memory: 1G | `ecosystem.config.cjs` | ⬜ TODO |
+| INFRA-2 | 모든 HL API에 10초 타임아웃 | `src/exchanges/hyperliquid/client.ts` | ⬜ TODO |
+| INFRA-3 | 전략 시작 전 프리플라이트 체크 | `src/core/engine.ts` | ⬜ TODO |
+| INFRA-4 | 텔레그램 하트비트 + 자동 재연결 | `src/monitoring/telegram.ts` | ⬜ TODO |
+| INFRA-5 | API 실패 서킷 브레이커 (3회 연속 → 일시정지) | `src/exchanges/hyperliquid/client.ts` | ⬜ TODO |
+
+---
+
 ## 완료된 작업 (Done)
 
 ### Phase 1: Grid Bot ✅
