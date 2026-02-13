@@ -540,7 +540,7 @@ export class HyperliquidClient {
       return assets
         .filter(a => a.funding !== 0)
         .map(a => ({
-          symbol: `${a.name}-PERP`,
+          symbol: a.name.endsWith('-PERP') ? a.name : `${a.name}-PERP`,
           rate: new Decimal(a.funding),
           timestamp: Date.now(),
         }));

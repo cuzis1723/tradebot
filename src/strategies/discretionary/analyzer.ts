@@ -404,7 +404,7 @@ export class MarketAnalyzer {
     const results: PreScreenResult[] = [];
 
     for (const asset of assetInfos) {
-      const symbol = `${asset.name}-PERP`;
+      const symbol = asset.name.endsWith('-PERP') ? asset.name : `${asset.name}-PERP`;
 
       // Hard liquidity floor
       if (asset.volume24h < opts.minVolume24h && !coreSet.has(asset.name)) continue;

@@ -586,7 +586,7 @@ export class LLMAdvisor {
     try {
       const response = await this.client.messages.create({
         model: config.anthropicModel,
-        max_tokens: 512,
+        max_tokens: 1024,
         system: promptManager.get('advisor_comprehensive'),
         messages: [{ role: 'user', content: contextWithBalance }],
       });
@@ -651,6 +651,27 @@ export class LLMAdvisor {
 
       return result;
     } catch {
+      // Attempt regex-based recovery for truncated JSON
+      try {
+        const regimeMatch = response.match(/"regime"\s*:\s*"([^"]+)"/);
+        const directionMatch = response.match(/"direction"\s*:\s*"([^"]+)"/);
+        const riskMatch = response.match(/"risk_level"\s*:\s*(\d+)/);
+        const confidenceMatch = response.match(/"confidence"\s*:\s*(\d+)/);
+        const reasoningMatch = response.match(/"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)/);
+
+        if (regimeMatch && directionMatch) {
+          log.warn('Recovered comprehensive response from truncated JSON via regex');
+          return {
+            regime: regimeMatch[1] as ComprehensiveResponse['regime'],
+            direction: directionMatch[1] as ComprehensiveResponse['direction'],
+            riskLevel: Math.min(5, Math.max(1, riskMatch ? parseInt(riskMatch[1]) : 3)),
+            confidence: Math.min(100, Math.max(0, confidenceMatch ? parseInt(confidenceMatch[1]) : 50)),
+            reasoning: reasoningMatch ? reasoningMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : 'Recovered from truncated response',
+          };
+        }
+      } catch {
+        // regex recovery also failed
+      }
       log.warn({ response: response.slice(0, 200) }, 'Failed to parse comprehensive response');
       return null;
     }
