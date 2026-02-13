@@ -522,7 +522,7 @@ function initPieChart() {
         tooltip: {
           backgroundColor: '#1e2d4a', titleColor: '#e8edf5', bodyColor: '#e8edf5',
           borderColor: '#2a3f66', borderWidth: 1, padding: 8, cornerRadius: 6,
-          callbacks: { label: c => c.label + ': ' + c.parsed.toFixed(1) + '%' }
+          callbacks: { label: c => c.label + ': ' + c.parsed.toFixed(1) + '% ($' + (c.parsed * (currentEquity || 0) / 100).toFixed(2) + ')' }
         },
       },
     }
@@ -540,12 +540,14 @@ function updatePieChart(positions, equity) {
 
   const posData = positions.map((p, i) => {
     const notional = Math.abs(Number(p.size) * Number(p.markPrice));
+    const leverage = Number(p.leverage) || 1;
+    const margin = notional / leverage;
     const symbol = p.symbol.includes('-PERP') ? p.symbol : p.symbol + '-PERP';
-    return { label: symbol, value: notional, color: PIE_COLORS[i % PIE_COLORS.length] };
+    return { label: symbol, value: margin, color: PIE_COLORS[i % PIE_COLORS.length] };
   });
 
-  const totalNotional = posData.reduce((s, d) => s + d.value, 0);
-  const cashPct = Math.max(0, ((eq - totalNotional) / eq) * 100);
+  const totalMargin = posData.reduce((s, d) => s + d.value, 0);
+  const cashPct = Math.max(0, ((eq - totalMargin) / eq) * 100);
   const labels = posData.map(d => d.label).concat('Cash');
   const data = posData.map(d => (d.value / eq) * 100).concat(cashPct);
   const colors = posData.map(d => d.color).concat('#1c2a42');
