@@ -122,23 +122,35 @@ function apiDailyPnl(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   const days = Math.min(365, parseInt(url.searchParams.get('days') ?? '30', 10));
 
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT date, SUM(pnl) as pnl, SUM(trades_count) as trades_count
-    FROM daily_pnl
-    WHERE date >= date('now', ?)
-    GROUP BY date
-    ORDER BY date ASC
-  `).all(`-${days} days`);
+  const hl = getHyperliquidClient();
+  const startTime = Date.now() - days * 86_400_000;
 
-  // Build cumulative PnL
-  let cumulative = 0;
-  const data = (rows as Array<{ date: string; pnl: number; trades_count: number }>).map(r => {
-    cumulative += r.pnl;
-    return { date: r.date, pnl: r.pnl, cumulative, trades: r.trades_count };
+  hl.getUserFillsByTime(startTime).then(fills => {
+    // Aggregate closedPnl by date
+    const byDate = new Map<string, { pnl: number; trades: number }>();
+    for (const f of fills) {
+      const pnl = parseFloat(f.closedPnl);
+      if (pnl === 0) continue; // skip non-closing fills
+      const date = new Date(f.time).toISOString().split('T')[0];
+      const entry = byDate.get(date) ?? { pnl: 0, trades: 0 };
+      entry.pnl += pnl;
+      entry.trades += 1;
+      byDate.set(date, entry);
+    }
+
+    // Sort by date and build cumulative
+    const sorted = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    let cumulative = 0;
+    const data = sorted.map(([date, d]) => {
+      cumulative += d.pnl;
+      return { date, pnl: d.pnl, cumulative, trades: d.trades };
+    });
+
+    json(res, data);
+  }).catch(err => {
+    log.warn({ err }, 'Dashboard: daily-pnl fetch failed');
+    json(res, [], 500);
   });
-
-  json(res, data);
 }
 
 function apiPositions(_req: IncomingMessage, res: ServerResponse): void {
