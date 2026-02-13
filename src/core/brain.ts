@@ -246,6 +246,16 @@ export class Brain extends EventEmitter {
 
     if (snapshots.length === 0) {
       log.warn('No market data for comprehensive analysis');
+      try {
+        logBrainDecision(
+          'comprehensive',
+          this.state.regime, this.state.direction,
+          this.state.riskLevel, this.state.confidence,
+          'Skipped: No market data available', null,
+        );
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log skipped brain decision');
+      }
       return;
     }
 
@@ -258,6 +268,16 @@ export class Brain extends EventEmitter {
     // Step 3: Call LLM for regime assessment via skill pipeline
     if (!this.advisor.isAvailable()) {
       log.warn('LLM not available for comprehensive analysis');
+      try {
+        logBrainDecision(
+          'comprehensive',
+          this.state.regime, this.state.direction,
+          this.state.riskLevel, this.state.confidence,
+          'Skipped: LLM not available', null,
+        );
+      } catch (e) {
+        log.warn({ err: e }, 'Failed to log skipped brain decision');
+      }
       this.state.lastComprehensiveAt = now;
       return;
     }

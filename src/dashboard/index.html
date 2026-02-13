@@ -119,14 +119,13 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .regime-badge.volatile { background: var(--purple-glow); color: var(--purple); }
 
 /* ── Metric Cards ── */
-.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
 @media (max-width: 700px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
 .metric { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; position: relative; overflow: hidden; }
 .metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; }
 .metric:nth-child(1)::before { background: linear-gradient(90deg, var(--teal), var(--blue)); }
 .metric:nth-child(2)::before { background: linear-gradient(90deg, var(--blue), var(--purple)); }
 .metric:nth-child(3)::before { background: linear-gradient(90deg, var(--green), var(--teal)); }
-.metric:nth-child(4)::before { background: linear-gradient(90deg, var(--purple), var(--pink)); }
 .metric-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 4px; }
 .metric-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
 .metric-value.green { color: var(--green); }
@@ -137,7 +136,8 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .chart-section { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
 .chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .chart-title { font-size: 13px; font-weight: 600; color: var(--text2); }
-.chart-tabs { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.chart-tabs { display: flex; gap: 8px; align-items: center; }
+.chart-toggle-group { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .chart-tab { padding: 5px 14px; font-size: 11px; font-weight: 600; color: var(--text3); cursor: pointer; transition: all 0.15s; border: none; background: transparent; }
 .chart-tab.active { background: linear-gradient(135deg, var(--blue), var(--purple2)); color: #fff; }
 .chart-tab:hover:not(.active) { color: var(--text2); background: var(--surface); }
@@ -166,6 +166,12 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .pos-pnl.red { color: var(--red); }
 .pos-meta { font-size: 11px; color: var(--text3); }
 .pos-empty { text-align: center; color: var(--text3); padding: 20px; font-size: 13px; }
+
+/* Position section layout with pie chart */
+.pos-layout { display: flex; gap: 16px; }
+.pos-layout .pos-list { flex: 1; min-width: 0; }
+.pos-chart-wrap { width: 180px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+@media (max-width: 600px) { .pos-layout { flex-direction: column; } .pos-chart-wrap { width: 100%; height: 160px; } }
 
 /* ── Timeline ── */
 .timeline { max-height: 500px; overflow-y: auto; }
@@ -267,14 +273,9 @@ header { display: flex; align-items: center; justify-content: space-between; pad
         <div class="metric-sub" id="mBalanceSub"></div>
       </div>
       <div class="metric">
-        <div class="metric-label">Equity</div>
-        <div class="metric-value" id="mEquity">-</div>
-        <div class="metric-sub" id="mEquitySub">balance + unrealized</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Unrealized PnL</div>
-        <div class="metric-value" id="mUpnl">-</div>
-        <div class="metric-sub" id="mUpnlSub"></div>
+        <div class="metric-label">Margin Used</div>
+        <div class="metric-value" id="mMargin">-</div>
+        <div class="metric-sub" id="mMarginSub"></div>
       </div>
       <div class="metric">
         <div class="metric-label">Realized PnL</div>
@@ -286,10 +287,16 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     <!-- Chart -->
     <div class="chart-section">
       <div class="chart-header">
-        <div class="chart-title" id="chartLabel">PnL</div>
+        <div class="chart-title" id="chartLabel">Daily PnL</div>
         <div class="chart-tabs">
-          <button class="chart-tab active" data-mode="daily">Daily</button>
-          <button class="chart-tab" data-mode="cumulative">Cumulative</button>
+          <div class="chart-toggle-group" id="chartSourceTabs">
+            <button class="chart-tab active" data-source="pnl">PnL</button>
+            <button class="chart-tab" data-source="balance">Balance</button>
+          </div>
+          <div class="chart-toggle-group" id="chartModeTabs">
+            <button class="chart-tab active" data-mode="daily">Daily</button>
+            <button class="chart-tab" data-mode="cumulative">Cumulative</button>
+          </div>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="mainChart"></canvas></div>
@@ -304,8 +311,11 @@ header { display: flex; align-items: center; justify-content: space-between; pad
       <div class="section-title">Open Positions</div>
       <span class="section-badge" id="posBadge">-</span>
     </div>
-    <div class="pos-list" id="positions">
-      <div class="pos-empty">No open positions</div>
+    <div class="pos-layout">
+      <div class="pos-list" id="positions">
+        <div class="pos-empty">No open positions</div>
+      </div>
+      <div class="pos-chart-wrap"><canvas id="pieChart"></canvas></div>
     </div>
   </div>
 
@@ -347,8 +357,11 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 <script>
 const $ = id => document.getElementById(id);
 let mainChart = null;
+let pieChart = null;
+let chartSource = 'pnl';
 let chartMode = 'daily';
 let pnlCache = [];
+let currentEquity = 0;
 let shareDataUrl = '';
 
 function fmtUsd(v) {
@@ -401,36 +414,123 @@ function initChart() {
     }
   });
 }
+
 function updateChart() {
   if (!mainChart || !pnlCache.length) return;
   const labels = pnlCache.map(d => d.date.slice(5));
-  if (chartMode === 'daily') {
-    mainChart.config.type = 'bar';
-    mainChart.data = { labels, datasets: [{
-      data: pnlCache.map(d => d.pnl),
-      backgroundColor: pnlCache.map(d => d.pnl >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
-      borderRadius: 3,
-    }]};
-    $('chartLabel').textContent = 'Daily PnL';
+
+  if (chartSource === 'pnl') {
+    if (chartMode === 'daily') {
+      mainChart.config.type = 'bar';
+      mainChart.data = { labels, datasets: [{
+        data: pnlCache.map(d => d.pnl),
+        backgroundColor: pnlCache.map(d => d.pnl >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'),
+        borderRadius: 3,
+      }]};
+      $('chartLabel').textContent = 'Daily PnL';
+    } else {
+      mainChart.config.type = 'line';
+      mainChart.data = { labels, datasets: [{
+        data: pnlCache.map(d => d.cumulative),
+        borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
+        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+      }]};
+      $('chartLabel').textContent = 'Cumulative PnL';
+    }
   } else {
-    mainChart.config.type = 'line';
-    mainChart.data = { labels, datasets: [{
-      data: pnlCache.map(d => d.cumulative),
-      borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.06)',
-      fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
-    }]};
-    $('chartLabel').textContent = 'Cumulative PnL';
+    // Balance mode: reverse-engineer daily balance from cumulative PnL + current equity
+    const totalCum = pnlCache.length > 0 ? pnlCache[pnlCache.length - 1].cumulative : 0;
+    const eq = currentEquity || 0;
+    const balances = pnlCache.map(d => eq - (totalCum - d.cumulative));
+
+    if (chartMode === 'cumulative') {
+      mainChart.config.type = 'line';
+      mainChart.data = { labels, datasets: [{
+        data: balances,
+        borderColor: '#14b8a6', backgroundColor: 'rgba(20,184,166,0.06)',
+        fill: true, tension: 0.35, pointRadius: 2, pointHoverRadius: 5, borderWidth: 2,
+      }]};
+      $('chartLabel').textContent = 'Balance History';
+    } else {
+      const changes = balances.map((b, i) => i === 0 ? 0 : b - balances[i - 1]);
+      mainChart.config.type = 'bar';
+      mainChart.data = { labels, datasets: [{
+        data: changes,
+        backgroundColor: changes.map(c => c >= 0 ? 'rgba(20,184,166,0.7)' : 'rgba(239,68,68,0.7)'),
+        borderRadius: 3,
+      }]};
+      $('chartLabel').textContent = 'Daily Balance Change';
+    }
   }
   mainChart.update('none');
 }
-document.querySelectorAll('.chart-tab').forEach(tab => {
+
+// Chart toggle: source tabs (PnL / Balance)
+document.querySelectorAll('#chartSourceTabs .chart-tab').forEach(tab => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#chartSourceTabs .chart-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    chartSource = tab.dataset.source;
+    updateChart();
+  });
+});
+
+// Chart toggle: mode tabs (Daily / Cumulative)
+document.querySelectorAll('#chartModeTabs .chart-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('#chartModeTabs .chart-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     chartMode = tab.dataset.mode;
     updateChart();
   });
 });
+
+// ── Pie Chart ──
+const PIE_COLORS = ['#3b82f6', '#a78bfa', '#14b8a6', '#fb7185', '#f59e0b', '#10b981', '#ef4444'];
+
+function initPieChart() {
+  pieChart = new Chart($('pieChart').getContext('2d'), {
+    type: 'doughnut',
+    data: { labels: ['Cash'], datasets: [{ data: [100], backgroundColor: ['#1c2a42'] }] },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e2d4a', titleColor: '#e8edf5', bodyColor: '#e8edf5',
+          borderColor: '#2a3f66', borderWidth: 1, padding: 8, cornerRadius: 6,
+          callbacks: { label: c => c.label + ': ' + c.parsed.toFixed(1) + '%' }
+        },
+      },
+    }
+  });
+}
+
+function updatePieChart(positions, equity) {
+  if (!pieChart) return;
+  const eq = equity || 0;
+  if (eq <= 0 || !positions || positions.length === 0) {
+    pieChart.data = { labels: ['Cash'], datasets: [{ data: [100], backgroundColor: ['#1c2a42'] }] };
+    pieChart.update('none');
+    return;
+  }
+
+  const posData = positions.map((p, i) => {
+    const notional = Math.abs(Number(p.size) * Number(p.markPrice));
+    const symbol = p.symbol.includes('-PERP') ? p.symbol : p.symbol + '-PERP';
+    return { label: symbol, value: notional, color: PIE_COLORS[i % PIE_COLORS.length] };
+  });
+
+  const totalNotional = posData.reduce((s, d) => s + d.value, 0);
+  const cashPct = Math.max(0, ((eq - totalNotional) / eq) * 100);
+  const labels = posData.map(d => d.label).concat('Cash');
+  const data = posData.map(d => (d.value / eq) * 100).concat(cashPct);
+  const colors = posData.map(d => d.color).concat('#1c2a42');
+
+  pieChart.data = { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] };
+  pieChart.update('none');
+}
 
 // ── Render: Agent ──
 function renderAgent(status) {
@@ -518,15 +618,16 @@ function renderAgent(status) {
   }
 }
 
-function renderMetrics(equity, fills, stats) {
+function renderMetrics(equity, balance, fills, stats) {
   if (equity) {
-    $('mBalance').textContent = fmtUsdPlain(equity.balance);
-    $('mBalanceSub').textContent = 'margin used: ' + fmtUsdPlain(equity.balance - equity.equity + equity.unrealizedPnl);
-    $('mEquity').textContent = fmtUsdPlain(equity.equity);
-
-    const upnlEl = $('mUpnl');
-    upnlEl.textContent = fmtUsd(equity.unrealizedPnl);
-    upnlEl.className = 'metric-value ' + pnlColor(equity.unrealizedPnl);
+    currentEquity = equity.equity;
+    $('mBalance').textContent = fmtUsdPlain(equity.equity);
+    const upnl = Number(equity.unrealizedPnl);
+    $('mBalanceSub').textContent = 'unrealized: ' + fmtUsd(upnl);
+  }
+  if (balance) {
+    $('mMargin').textContent = fmtUsdPlain(balance.marginUsed);
+    $('mMarginSub').textContent = 'free: ' + fmtUsdPlain(balance.freeMargin);
   }
   if (fills && fills.length > 0) {
     const realized = fills.reduce((s, f) => s + parseFloat(f.closedPnl), 0);
@@ -542,19 +643,21 @@ function renderMetrics(equity, fills, stats) {
   }
 }
 
-function renderPositions(positions) {
+function renderPositions(positions, equity) {
   const wrap = $('positions');
   if (!positions || positions.length === 0) {
     wrap.innerHTML = '<div class="pos-empty">No open positions</div>';
     $('posBadge').textContent = '0';
+    updatePieChart(null, 0);
     return;
   }
   $('posBadge').textContent = positions.length + ' open';
   wrap.innerHTML = positions.map(p => {
     const pnl = Number(p.unrealizedPnl);
+    const sym = p.symbol.includes('-PERP') ? p.symbol : p.symbol + '-PERP';
     return `<div class="pos-card">
       <div class="pos-left">
-        <div><span class="pos-symbol">${p.symbol}-PERP</span> <span class="pos-side ${p.side}">${p.side.toUpperCase()}</span></div>
+        <div><span class="pos-symbol">${sym}</span> <span class="pos-side ${p.side}">${p.side.toUpperCase()}</span></div>
         <div class="pos-details">${Number(p.size).toFixed(4)} @ ${fmtUsdPlain(p.entryPrice)} | ${p.leverage}x</div>
       </div>
       <div class="pos-right">
@@ -563,6 +666,7 @@ function renderPositions(positions) {
       </div>
     </div>`;
   }).join('');
+  updatePieChart(positions, equity);
 }
 
 function renderTimeline(decisions) {
@@ -636,17 +740,18 @@ $('shareModal').addEventListener('click', e => { if (e.target === $('shareModal'
 
 // ── Main ──
 async function refresh() {
-  const [status, equity, pnlData, fills, positions, stats, decisions] = await Promise.all([
-    fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/daily-pnl?days=90'),
-    fetchJson('/api/fills?limit=50'), fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=30'),
+  const [status, equity, balance, pnlData, fills, positions, stats, decisions] = await Promise.all([
+    fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/balance'),
+    fetchJson('/api/daily-pnl?days=90'), fetchJson('/api/fills?limit=50'),
+    fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=30'),
   ]);
   renderAgent(status);
-  renderMetrics(equity, fills, stats);
-  renderPositions(positions);
+  renderMetrics(equity, balance, fills, stats);
+  renderPositions(positions, equity?.equity);
   renderTimeline(decisions);
   if (pnlData && pnlData.length > 0) { pnlCache = pnlData; updateChart(); }
 }
-initChart(); refresh(); setInterval(refresh, 30000);
+initChart(); initPieChart(); refresh(); setInterval(refresh, 30000);
 </script>
 </body>
 </html>
