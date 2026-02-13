@@ -82,7 +82,7 @@ export const defaultBrainConfig: BrainConfig = {
     llmThreshold: 8,
     alertThreshold: 5,
     symbolCooldownMs: 2 * 60 * 60 * 1000,     // 2h
-    globalCooldownMs: 30 * 60 * 1000,          // 30min
+    globalCooldownMs: 15 * 60 * 1000,          // 15min (reduced from 30min — daily limit caps cost)
     maxDailyCalls: 12,
     lossCooldownMs: 4 * 60 * 60 * 1000,       // 4h
     maxConsecutiveLosses: 2,
