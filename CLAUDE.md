@@ -67,12 +67,12 @@
 
 | # | 이슈 | 파일 | 상태 |
 |---|------|------|------|
-| CRIT-1 | 마진 계산 틀림 (notional을 margin으로 오인) | `src/core/skills/code-skills.ts:232` | ⬜ TODO |
-| CRIT-2 | Discretionary SL/TP가 거래소 주문 아님 (메모리만) | `src/strategies/discretionary/index.ts:169` | ⬜ TODO |
-| CRIT-3 | Discretionary 포지션 DB 미저장 (PM2 재시작 시 유실) | `src/strategies/discretionary/index.ts:34` | ⬜ TODO |
-| CRIT-4 | 크로스 레버리지 캡 없음 (총 노셔널 무제한) | `src/core/risk-manager.ts:138` | ⬜ TODO |
-| CRIT-8 | /do 명령 무제한 LLM 실행 (위험 도구 접근) | `src/monitoring/telegram.ts` | ⬜ TODO |
-| CRIT-9 | 대시보드 인증 없음 (CORS *, API 키 없음) | `src/dashboard/server.ts:39` | ⬜ TODO |
+| CRIT-1 | 마진 계산 틀림 (notional을 margin으로 오인) | `src/core/skills/code-skills.ts:232` | ✅ DONE |
+| CRIT-2 | Discretionary SL/TP가 거래소 주문 아님 (메모리만) | `src/strategies/discretionary/index.ts:169` | ✅ DONE |
+| CRIT-3 | Discretionary 포지션 DB 미저장 (PM2 재시작 시 유실) | `src/strategies/discretionary/index.ts:34` | ✅ DONE |
+| CRIT-4 | 크로스 레버리지 캡 없음 (총 노셔널 무제한) | `src/core/risk-manager.ts:138` | ✅ DONE |
+| CRIT-8 | /do 명령 무제한 LLM 실행 (위험 도구 접근) | `src/monitoring/telegram.ts` | ✅ DONE |
+| CRIT-9 | 대시보드 인증 없음 (CORS *, API 키 없음) | `src/dashboard/server.ts:39` | ✅ DONE |
 
 ### Phase 1: 수학/알고리즘 수정
 
@@ -325,6 +325,7 @@ ANTHROPIC_API_KEY=      # Claude API key (Discretionary용)
 ANTHROPIC_MODEL=        # LLM 모델 (default: claude-haiku-4-5-20251001)
 DASHBOARD_PORT=         # 웹 대시보드 포트 (default: 3847)
 DASHBOARD_URL=          # 외부 접속 URL (Telegram /dashboard용)
+DASHBOARD_API_KEY=      # 대시보드 API 키 (설정 시 /api/* 경로 인증 필수)
 ```
 
 ---

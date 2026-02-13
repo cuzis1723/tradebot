@@ -230,10 +230,13 @@ export interface ActiveDiscretionaryPosition {
   side: OrderSide;
   entryPrice: number;
   size: number;
+  leverage: number;
   stopLoss: number;
   takeProfit: number;
   proposalId: string;
   openedAt: number;
+  slOrderId?: number;
+  tpOrderId?: number;
 }
 
 // === Trigger Score Types (v2) ===

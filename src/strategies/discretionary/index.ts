@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Strategy } from '../base.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
-import { logTrade } from '../../data/storage.js';
+import { logTrade, saveStrategyState, loadStrategyState } from '../../data/storage.js';
 import type {
   StrategyTier,
   TradingMode,
@@ -44,7 +44,8 @@ export class DiscretionaryStrategy extends Strategy {
 
   async onInit(): Promise<void> {
     this.log.info({ symbols: this.config.symbols }, 'Discretionary v3 strategy initializing (Brain-driven)');
-    // No analysis loop — Brain handles all scanning and LLM calls
+    // Restore positions from DB (CRIT-3: survive restarts)
+    this.restorePositions();
   }
 
   async onTick(_data: Record<string, string>): Promise<TradeSignal | null> {
@@ -176,16 +177,48 @@ export class DiscretionaryStrategy extends Strategy {
         return `Order failed: ${result.error}`;
       }
 
-      this.positions.push({
+      // Place SL/TP as exchange trigger orders (CRIT-2: not just in-memory)
+      let slOrderId: number | undefined;
+      let tpOrderId: number | undefined;
+      try {
+        const slResult = await hl.placeTriggerOrder({
+          coin: proposal.symbol,
+          isBuy: proposal.side !== 'buy', // opposite side to close
+          size: sz.toString(),
+          triggerPx: proposal.stopLoss.toString(),
+          tpsl: 'sl',
+          reduceOnly: true,
+        });
+        if (slResult.orderId) slOrderId = slResult.orderId;
+
+        const tpResult = await hl.placeTriggerOrder({
+          coin: proposal.symbol,
+          isBuy: proposal.side !== 'buy',
+          size: sz.toString(),
+          triggerPx: proposal.takeProfit.toString(),
+          tpsl: 'tp',
+          reduceOnly: true,
+        });
+        if (tpResult.orderId) tpOrderId = tpResult.orderId;
+      } catch (triggerErr) {
+        this.log.warn({ triggerErr, symbol: proposal.symbol }, 'Failed to place SL/TP trigger orders');
+      }
+
+      const position = {
         symbol: proposal.symbol,
         side: proposal.side,
         entryPrice: result.filled ? parseFloat(result.avgPrice!) : proposal.entryPrice,
         size: sz,
+        leverage: proposal.leverage,
         stopLoss: proposal.stopLoss,
         takeProfit: proposal.takeProfit,
         proposalId: proposal.id,
         openedAt: Date.now(),
-      });
+        slOrderId,
+        tpOrderId,
+      };
+      this.positions.push(position);
+      this.persistPositions();
 
       proposal.status = 'executed';
 
@@ -199,8 +232,9 @@ export class DiscretionaryStrategy extends Strategy {
         price: proposal.entryPrice.toString(),
       });
 
+      const triggerStatus = slOrderId && tpOrderId ? 'SL/TP ON EXCHANGE' : 'SL/TP PENDING';
       const fillStatus = result.filled ? '(FILLED)' : '(RESTING)';
-      return `Order placed ${fillStatus}: ${proposal.side.toUpperCase()} ${sz} ${proposal.symbol} @ $${proposal.entryPrice}\nSL: $${proposal.stopLoss} | TP: $${proposal.takeProfit}`;
+      return `Order placed ${fillStatus}: ${proposal.side.toUpperCase()} ${sz} ${proposal.symbol} @ $${proposal.entryPrice}\nSL: $${proposal.stopLoss} | TP: $${proposal.takeProfit} [${triggerStatus}]`;
     } catch (err) {
       this.log.error({ err, proposal }, 'Failed to execute proposal');
       return `Execution error: ${String(err)}`;
@@ -211,6 +245,14 @@ export class DiscretionaryStrategy extends Strategy {
     const hl = getHyperliquidClient();
 
     try {
+      // Cancel remaining trigger orders (SL/TP) before closing
+      try {
+        if (position.slOrderId) await hl.cancelOrder(position.symbol, position.slOrderId);
+        if (position.tpOrderId) await hl.cancelOrder(position.symbol, position.tpOrderId);
+      } catch (cancelErr) {
+        this.log.debug({ cancelErr, symbol: position.symbol }, 'Failed to cancel trigger orders (may already be filled)');
+      }
+
       const result = await hl.placeOrder({
         coin: position.symbol,
         isBuy: position.side === 'sell',
@@ -228,6 +270,7 @@ export class DiscretionaryStrategy extends Strategy {
       const pnl = (closePrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+      this.persistPositions();
 
       logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, position.size, 0, pnl);
       this.recordTrade(new Decimal(pnl));
@@ -252,6 +295,28 @@ export class DiscretionaryStrategy extends Strategy {
   private async closeAllPositions(): Promise<void> {
     for (const position of [...this.positions]) {
       await this.closePosition(position);
+    }
+  }
+
+  // === DB Persistence (CRIT-3) ===
+
+  private persistPositions(): void {
+    try {
+      saveStrategyState('discretionary_positions', this.positions);
+    } catch (err) {
+      this.log.warn({ err }, 'Failed to persist discretionary positions');
+    }
+  }
+
+  private restorePositions(): void {
+    try {
+      const saved = loadStrategyState<ActiveDiscretionaryPosition[]>('discretionary_positions');
+      if (saved && Array.isArray(saved) && saved.length > 0) {
+        this.positions = saved;
+        this.log.info({ count: saved.length }, 'Restored discretionary positions from DB');
+      }
+    } catch (err) {
+      this.log.warn({ err }, 'Failed to restore discretionary positions');
     }
   }
 

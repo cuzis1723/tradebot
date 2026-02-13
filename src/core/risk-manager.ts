@@ -162,6 +162,36 @@ export class RiskManager {
     return { approved: true };
   }
 
+  /**
+   * CRIT-4: Check total notional across ALL strategies against balance.
+   * Blocks if total notional exceeds maxLeverage * balance (default 10x).
+   */
+  checkTotalLeverage(
+    summaries: StrategyPositionSummary[],
+    newNotional: number,
+    totalBalance: number,
+  ): RiskCheckResult {
+    const totalExisting = summaries.reduce((sum, s) => sum + s.notionalValue, 0);
+    const totalNotional = totalExisting + newNotional;
+    const maxNotional = totalBalance * this.limits.maxLeverage;
+
+    if (totalNotional > maxNotional) {
+      log.warn({
+        totalExisting: totalExisting.toFixed(2),
+        newNotional: newNotional.toFixed(2),
+        totalNotional: totalNotional.toFixed(2),
+        maxNotional: maxNotional.toFixed(2),
+        maxLeverage: this.limits.maxLeverage,
+      }, 'Total leverage cap exceeded');
+      return {
+        approved: false,
+        reason: `Total notional $${totalNotional.toFixed(0)} exceeds ${this.limits.maxLeverage}x balance cap ($${maxNotional.toFixed(0)})`,
+      };
+    }
+
+    return { approved: true };
+  }
+
   getLimits(): RiskLimits {
     return { ...this.limits };
   }

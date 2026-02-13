@@ -29,6 +29,7 @@ const configSchema = z.object({
   // Dashboard
   dashboardPort: z.coerce.number().min(0).max(65535).default(3847),
   dashboardUrl: z.string().optional(),
+  dashboardApiKey: z.string().optional(),
 
   // Risk limits
   maxGlobalDrawdownPct: z.coerce.number().min(0).max(100).default(20),
@@ -55,6 +56,7 @@ function loadConfig(): Config {
     anthropicModel: process.env.ANTHROPIC_MODEL,
     dashboardPort: process.env.DASHBOARD_PORT,
     dashboardUrl: process.env.DASHBOARD_URL,
+    dashboardApiKey: process.env.DASHBOARD_API_KEY,
     maxGlobalDrawdownPct: process.env.MAX_GLOBAL_DRAWDOWN_PCT,
     maxStrategyDrawdownPct: process.env.MAX_STRATEGY_DRAWDOWN_PCT,
     maxDailyLossPct: process.env.MAX_DAILY_LOSS_PCT,
