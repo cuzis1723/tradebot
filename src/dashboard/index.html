@@ -45,62 +45,9 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 .agent-section::after { content: ''; position: absolute; bottom: -30px; left: -30px; width: 100px; height: 100px; background: radial-gradient(circle, var(--teal-glow), transparent 70%); pointer-events: none; }
 @media (max-width: 600px) { .agent-section { flex-direction: column; text-align: center; } }
 
-/* ── Kawaii Robot ── */
-.robot { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; animation: robot-float 3s ease-in-out infinite; position: relative; z-index: 1; }
-@keyframes robot-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
-.robot.working { animation: robot-work 1s ease-in-out infinite; }
-@keyframes robot-work { 0%,100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-4px) rotate(-3deg); } 75% { transform: translateY(-4px) rotate(3deg); } }
-.robot.sleeping .robot-eye { animation: none; height: 3px; border-radius: 3px; }
-.robot.sleeping .robot-mouth { width: 8px; }
-
-/* Antenna */
-.robot-antenna { width: 3px; height: 14px; background: linear-gradient(var(--purple), var(--blue)); margin-bottom: -2px; position: relative; border-radius: 2px; }
-.robot-antenna::after { content: ''; position: absolute; top: -7px; left: 50%; transform: translateX(-50%); width: 10px; height: 10px; border-radius: 50%; background: linear-gradient(135deg, var(--purple), var(--blue)); box-shadow: 0 0 10px var(--purple-glow), 0 0 20px rgba(139,92,246,0.1); animation: antenna-pulse 2s ease-in-out infinite; }
-@keyframes antenna-pulse { 0%,100% { box-shadow: 0 0 6px var(--purple-glow); transform: translateX(-50%) scale(1); } 50% { box-shadow: 0 0 16px var(--purple), 0 0 28px var(--purple-glow); transform: translateX(-50%) scale(1.15); } }
-
-/* Head */
-.robot-head { width: 72px; height: 58px; background: linear-gradient(180deg, #1e2d4a, #172240); border: 2.5px solid #2a3f66; border-radius: 18px; display: flex; align-items: center; justify-content: center; gap: 16px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04); }
-/* Ears */
-.robot-head::before, .robot-head::after { content: ''; position: absolute; width: 8px; height: 14px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 3px; top: 50%; transform: translateY(-50%); }
-.robot-head::before { left: -6px; border-radius: 3px 0 0 3px; }
-.robot-head::after { right: -6px; border-radius: 0 3px 3px 0; }
-
-/* Eyes */
-.robot-eye { width: 12px; height: 14px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue-glow); animation: blink 4s ease-in-out infinite; position: relative; }
-.robot-eye.right { animation-delay: 0.15s; }
-/* Eye highlight (catchlight) */
-.robot-eye::after { content: ''; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.7); }
-@keyframes blink { 0%,42%,58%,100% { transform: scaleY(1); } 50% { transform: scaleY(0.1); } }
-
-/* Blush */
-.robot-blush { position: absolute; bottom: 12px; width: 10px; height: 6px; border-radius: 50%; background: rgba(244,114,182,0.35); }
-.robot-blush.left { left: 10px; }
-.robot-blush.right { right: 10px; }
-
-/* Mouth */
-.robot-mouth { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 12px; height: 6px; border: 2px solid var(--teal); border-top: none; border-radius: 0 0 8px 8px; }
-.robot.working .robot-mouth { border-radius: 50%; width: 8px; height: 8px; border: 2px solid var(--teal); border-top: 2px solid var(--teal); bottom: 8px; }
-
-/* Body */
-.robot-body-wrap { display: flex; align-items: flex-start; gap: 0; margin-top: 3px; }
-.robot-arm { width: 8px; height: 22px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 4px; position: relative; }
-.robot-arm.left { transform-origin: top right; animation: arm-l 3s ease-in-out infinite; }
-.robot-arm.right { transform-origin: top left; animation: arm-r 3s ease-in-out infinite; }
-/* Hands */
-.robot-arm::after { content: ''; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 10px; height: 10px; border-radius: 50%; background: #2a3f66; }
-@keyframes arm-l { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-12deg); } }
-@keyframes arm-r { 0%,100% { transform: rotate(0); } 50% { transform: rotate(12deg); } }
-.robot.working .robot-arm.left { animation: arm-work-l 0.6s ease-in-out infinite; }
-.robot.working .robot-arm.right { animation: arm-work-r 0.6s ease-in-out infinite; }
-@keyframes arm-work-l { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(-25deg); } }
-@keyframes arm-work-r { 0%,100% { transform: rotate(5deg); } 50% { transform: rotate(25deg); } }
-.robot-body { width: 46px; height: 32px; background: linear-gradient(180deg, #1e2d4a, #172240); border: 2.5px solid #2a3f66; border-radius: 10px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
-.robot-screen { font-size: 14px; animation: screen-heart 2s ease-in-out infinite; }
-@keyframes screen-heart { 0%,100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.2); opacity: 1; } }
-
-/* Legs */
-.robot-legs { display: flex; gap: 12px; margin-top: 3px; }
-.robot-leg { width: 12px; height: 12px; background: linear-gradient(180deg, #2a3f66, #1e2d4a); border-radius: 4px 4px 6px 6px; }
+/* ── Pixel Character ── */
+.pixel-character { width: 128px; height: 128px; flex-shrink: 0; position: relative; z-index: 1; }
+.pixel-character canvas { width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
 
 /* Agent status text */
 .agent-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
@@ -234,21 +181,8 @@ header { display: flex; align-items: center; justify-content: space-between; pad
 
     <!-- Agent Card -->
     <div class="agent-section">
-      <div class="robot" id="robot">
-        <div class="robot-antenna"></div>
-        <div class="robot-head">
-          <div class="robot-eye left"></div>
-          <div class="robot-eye right"></div>
-          <div class="robot-blush left"></div>
-          <div class="robot-blush right"></div>
-          <div class="robot-mouth"></div>
-        </div>
-        <div class="robot-body-wrap">
-          <div class="robot-arm left"></div>
-          <div class="robot-body"><div class="robot-screen" id="robotScreen">&#9829;</div></div>
-          <div class="robot-arm right"></div>
-        </div>
-        <div class="robot-legs"><div class="robot-leg"></div><div class="robot-leg"></div></div>
+      <div class="pixel-character" id="pixelChar">
+        <canvas id="charCanvas" width="64" height="64"></canvas>
       </div>
       <div class="agent-info">
         <div class="agent-status-line">
@@ -363,6 +297,94 @@ let chartMode = 'daily';
 let pnlCache = [];
 let currentEquity = 0;
 let shareDataUrl = '';
+
+// ── Sprite Animator ──
+const SPRITE_SHEET = 'data:image/png;base64,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';
+
+const ANIM = { idle: 0, working: 1, sleeping: 2, celebrating: 3, worried: 4, warmup: 5 };
+const FRAME_W = 64, FRAME_H = 64, COLS = 6, FPS = 8;
+
+class SpriteAnimator {
+  constructor(canvasId) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext('2d');
+    this.img = new Image();
+    this.loaded = false;
+    this.row = ANIM.warmup;
+    this.col = 0;
+    this.tintColor = null;
+    this.lastFrame = 0;
+    this.running = true;
+
+    this.img.onload = () => { this.loaded = true; this.draw(); };
+    this.img.src = SPRITE_SHEET;
+
+    // Offscreen canvas for tinting
+    this.offCanvas = document.createElement('canvas');
+    this.offCanvas.width = FRAME_W;
+    this.offCanvas.height = FRAME_H;
+    this.offCtx = this.offCanvas.getContext('2d');
+
+    // Pause when tab hidden
+    document.addEventListener('visibilitychange', () => {
+      this.running = !document.hidden;
+      if (this.running) this.loop(performance.now());
+    });
+
+    this.loop = this.loop.bind(this);
+    requestAnimationFrame(this.loop);
+  }
+
+  setAnimation(row) {
+    if (this.row !== row) { this.row = row; this.col = 0; }
+  }
+
+  setTint(color) { this.tintColor = color; }
+
+  loop(ts) {
+    if (!this.running) return;
+    if (ts - this.lastFrame >= 1000 / FPS) {
+      this.lastFrame = ts;
+      this.col = (this.col + 1) % COLS;
+      this.draw();
+    }
+    requestAnimationFrame(this.loop);
+  }
+
+  draw() {
+    if (!this.loaded) return;
+    const sx = this.col * FRAME_W, sy = this.row * FRAME_H;
+
+    // Draw sprite to offscreen canvas
+    this.offCtx.clearRect(0, 0, FRAME_W, FRAME_H);
+    this.offCtx.drawImage(this.img, sx, sy, FRAME_W, FRAME_H, 0, 0, FRAME_W, FRAME_H);
+
+    // Apply tint (color overlay on opaque pixels)
+    if (this.tintColor) {
+      this.offCtx.save();
+      this.offCtx.globalCompositeOperation = 'source-atop';
+      this.offCtx.fillStyle = this.tintColor;
+      this.offCtx.globalAlpha = 0.12;
+      this.offCtx.fillRect(0, 0, FRAME_W, FRAME_H);
+      this.offCtx.restore();
+    }
+
+    // Copy to main canvas
+    this.ctx.clearRect(0, 0, FRAME_W, FRAME_H);
+    this.ctx.drawImage(this.offCanvas, 0, 0);
+  }
+
+  // For html2canvas screenshot: return current frame as img element
+  toImage() {
+    const img = document.createElement('img');
+    img.width = 128; img.height = 128;
+    img.style.imageRendering = 'pixelated';
+    img.src = this.canvas.toDataURL('image/png');
+    return img;
+  }
+}
+
+let animator = null;
 
 function fmtUsd(v) {
   const n = Number(v);
@@ -534,8 +556,10 @@ function updatePieChart(positions, equity) {
 
 // ── Render: Agent ──
 function renderAgent(status) {
-  const robot = $('robot');
-  const screenEmojis = { bullish: '&#9829;', bearish: '&#9889;', neutral: '&#9733;' };
+  if (!animator) return;
+
+  // Tint colors by market direction
+  const tintColors = { bullish: 'rgba(16,185,129,0.5)', bearish: 'rgba(251,113,133,0.5)', neutral: 'rgba(59,130,246,0.5)' };
 
   // API unavailable — show sleeping bot
   if (!status || !status.brain) {
@@ -543,7 +567,8 @@ function renderAgent(status) {
     if (status) $('uptime').textContent = status.running ? 'up ' + fmtDuration(status.uptime) : 'stopped';
 
     if (!status) {
-      robot.className = 'robot sleeping';
+      animator.setAnimation(ANIM.sleeping);
+      animator.setTint(null);
       $('agentStatus').textContent = 'Connecting...';
       $('regimeBadge').className = 'regime-badge warming';
       $('regimeBadge').textContent = 'offline';
@@ -559,27 +584,27 @@ function renderAgent(status) {
   const firstAnalysisDone = b.updatedAt > 0;
   const isRecent = firstAnalysisDone && (Date.now() - b.updatedAt < 300000);
 
-  // Robot state
+  // Character state machine
   if (!firstAnalysisDone) {
-    robot.className = 'robot';
-    $('robotScreen').innerHTML = '&#10024;'; // sparkle while warming up
+    animator.setAnimation(ANIM.warmup);
+    animator.setTint(null);
   } else if (isRecent) {
-    robot.className = 'robot working';
-    $('robotScreen').innerHTML = screenEmojis[b.direction] || '&#9733;';
+    if (b.regime === 'volatile' || b.direction === 'bearish') {
+      animator.setAnimation(ANIM.worried);
+      animator.setTint(tintColors.bearish);
+    } else {
+      animator.setAnimation(ANIM.working);
+      animator.setTint(tintColors[b.direction] || tintColors.neutral);
+    }
   } else {
-    robot.className = 'robot';
-    $('robotScreen').innerHTML = screenEmojis[b.direction] || '&#9829;';
+    if (b.direction === 'bullish' && (b.regime === 'trending_up')) {
+      animator.setAnimation(ANIM.celebrating);
+      animator.setTint(tintColors.bullish);
+    } else {
+      animator.setAnimation(ANIM.idle);
+      animator.setTint(tintColors[b.direction] || null);
+    }
   }
-
-  // Eye color by direction
-  const eyeColors = { bullish: 'var(--green)', bearish: 'var(--coral)', neutral: 'var(--blue)' };
-  const eyeGlows = { bullish: 'var(--green-glow)', bearish: 'var(--red-glow)', neutral: 'var(--blue-glow)' };
-  const eyeColor = eyeColors[b.direction] || 'var(--blue)';
-  const eyeGlow = eyeGlows[b.direction] || 'var(--blue-glow)';
-  document.querySelectorAll('.robot-eye').forEach(e => {
-    e.style.background = eyeColor;
-    e.style.boxShadow = '0 0 8px ' + eyeGlow;
-  });
 
   // Status text — friendly names
   if (!firstAnalysisDone) {
@@ -708,13 +733,28 @@ function renderTimeline(decisions) {
 async function openShare() {
   const wm = $('shareWatermark');
   wm.style.display = 'block';
+
+  // html2canvas can't capture <canvas> well — swap to static <img> temporarily
+  const charEl = $('pixelChar');
+  const charCanvas = $('charCanvas');
+  let tempImg = null;
+  if (animator) {
+    tempImg = animator.toImage();
+    charCanvas.style.display = 'none';
+    charEl.appendChild(tempImg);
+  }
+
   try {
     const canvas = await html2canvas($('shareCard'), { backgroundColor: '#06090f', scale: 2, useCORS: true, logging: false });
     shareDataUrl = canvas.toDataURL('image/png');
     $('sharePreview').src = shareDataUrl;
     $('shareModal').classList.add('show');
   } catch (err) { console.error(err); alert('Screenshot failed'); }
-  finally { wm.style.display = 'none'; }
+  finally {
+    wm.style.display = 'none';
+    // Restore canvas
+    if (tempImg) { charEl.removeChild(tempImg); charCanvas.style.display = ''; }
+  }
 }
 function closeShare() { $('shareModal').classList.remove('show'); }
 function downloadImage() {
@@ -751,6 +791,7 @@ async function refresh() {
   renderTimeline(decisions);
   if (pnlData && pnlData.length > 0) { pnlCache = pnlData; updateChart(); }
 }
+animator = new SpriteAnimator('charCanvas');
 initChart(); initPieChart(); refresh(); setInterval(refresh, 30000);
 </script>
 </body>
