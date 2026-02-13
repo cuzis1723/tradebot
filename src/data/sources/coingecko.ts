@@ -154,7 +154,18 @@ export class CoinGeckoSource {
       if (!coin.relevantSymbol) continue;
 
       // Only trigger if coin is trending AND has >20% price surge in 24h
-      if (coin.priceChange24h > 20) {
+      if (coin.priceChange24h > 30) {
+        // >30% surge: momentum exhaustion risk — reclassify as neutral warning
+        flags.push({
+          source: 'coingecko',
+          name: 'already_surged',
+          score: 2,
+          direction: 'neutral',
+          relevantSymbol: coin.relevantSymbol,
+          detail: `${coin.name} trending #${coin.score + 1} but already surged +${coin.priceChange24h.toFixed(1)}% 24h — momentum exhaustion risk`,
+        });
+      } else if (coin.priceChange24h > 20) {
+        // 20-30% surge: standard bullish signal
         flags.push({
           source: 'coingecko',
           name: 'trending_surge',

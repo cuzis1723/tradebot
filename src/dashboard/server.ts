@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createChildLogger } from '../monitoring/logger.js';
 import { getDb, getRecentDecisions, getRecentTradeProposals } from '../data/storage.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
+import { config } from '../config/index.js';
 import type { EngineStatus } from '../core/types.js';
 import type { Brain } from '../core/brain.js';
 import type { LLMUsageStats } from '../strategies/discretionary/llm-advisor.js';
@@ -286,15 +287,41 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/equity': apiEquity,
 };
 
+/** CRIT-9: Validate API key for /api/* routes if DASHBOARD_API_KEY is set */
+function checkAuth(req: IncomingMessage, res: ServerResponse): boolean {
+  const apiKey = config.dashboardApiKey;
+  if (!apiKey) return true; // No key configured = no auth required
+
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  // Only protect /api/* routes, not the HTML dashboard itself
+  if (!url.pathname.startsWith('/api/')) return true;
+
+  // Accept key from ?key= query param or Authorization header
+  const queryKey = url.searchParams.get('key');
+  const headerKey = req.headers.authorization?.replace('Bearer ', '');
+
+  if (queryKey === apiKey || headerKey === apiKey) return true;
+
+  json(res, { error: 'Unauthorized. Set ?key= or Authorization: Bearer <key>' }, 401);
+  return false;
+}
+
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   const pathname = new URL(req.url ?? '/', `http://${req.headers.host}`).pathname;
 
   // CORS preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Content-Type' });
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    });
     res.end();
     return;
   }
+
+  // Auth check
+  if (!checkAuth(req, res)) return;
 
   const handler = routes[pathname];
   if (handler) {

@@ -169,23 +169,24 @@ export class MomentumStrategy extends Strategy {
     const now2 = Date.now();
     if (state && now2 - state.lastSignalTime < this.SIGNAL_COOLDOWN_MS) return null;
 
-    if (bullishCross && rsi < this.config.rsiOverbought && rsi > this.config.rsiOversold) {
+    // WARN-5: RSI must confirm direction (>45 for long, <55 for short) + avoid extremes
+    if (bullishCross && rsi > 45 && rsi < this.config.rsiOverbought) {
       // Brain directive filter: check if long is allowed
       if (this.marketState?.directives.momentum.allowLong === false) {
         this.log.info({ symbol }, 'LONG signal suppressed by Brain directive (allowLong=false)');
         return null;
       }
-      this.log.info({ symbol, fastEma, slowEma, rsi }, 'LONG signal: EMA bullish cross');
+      this.log.info({ symbol, fastEma, slowEma, rsi }, 'LONG signal: EMA bullish cross + RSI confirms');
       return 'long';
     }
 
-    if (bearishCross && rsi > this.config.rsiOversold && rsi < this.config.rsiOverbought) {
+    if (bearishCross && rsi < 55 && rsi > this.config.rsiOversold) {
       // Brain directive filter: check if short is allowed
       if (this.marketState?.directives.momentum.allowShort === false) {
         this.log.info({ symbol }, 'SHORT signal suppressed by Brain directive (allowShort=false)');
         return null;
       }
-      this.log.info({ symbol, fastEma, slowEma, rsi }, 'SHORT signal: EMA bearish cross');
+      this.log.info({ symbol, fastEma, slowEma, rsi }, 'SHORT signal: EMA bearish cross + RSI confirms');
       return 'short';
     }
 
@@ -231,13 +232,16 @@ export class MomentumStrategy extends Strategy {
     const currentPrice = parsed[parsed.length - 1].close;
     const side: 'buy' | 'sell' = signal === 'long' ? 'buy' : 'sell';
 
-    // ATR-based stop loss (2x ATR) and take profit (3x ATR)
+    // ATR-based stop loss capped at 5% of price (CRIT-6: prevent unlimited SL)
+    const slDistance = Math.min(2 * atr, currentPrice * 0.05);
+    // TP uses same capped distance with 1.5:1 R:R ratio (CRIT-7: based on entry, not current)
+    const tpDistance = slDistance * 1.5;
     const stopLoss = side === 'buy'
-      ? currentPrice - 2 * atr
-      : currentPrice + 2 * atr;
+      ? currentPrice - slDistance
+      : currentPrice + slDistance;
     const takeProfit = side === 'buy'
-      ? currentPrice + 3 * atr
-      : currentPrice - 3 * atr;
+      ? currentPrice + tpDistance
+      : currentPrice - tpDistance;
 
     // Skip if auto-stopped due to consecutive losses
     if (this.isAutoStopped) {

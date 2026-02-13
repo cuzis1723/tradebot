@@ -317,7 +317,7 @@ export class LLMAdvisor {
    * The LLM can call Hyperliquid functions directly (check balance, trade, transfer, etc.)
    * Runs a tool-use loop: LLM → tool_call → execute → result → LLM → ... → final text.
    */
-  async chatWithTools(userMessage: string, systemOverride?: string): Promise<string> {
+  async chatWithTools(userMessage: string, systemOverride?: string, options?: { blockedTools?: string[] }): Promise<string> {
     if (!this.client) throw new Error('LLM advisor not available');
 
     // Carry over previous skills conversation for context continuity
@@ -331,6 +331,12 @@ export class LLMAdvisor {
     // Use a working copy that includes history
     const messages: Anthropic.MessageParam[] = [...this.skillsHistory];
 
+    // CRIT-8: Filter out blocked tools
+    const blockedSet = new Set(options?.blockedTools ?? []);
+    const allowedTools = blockedSet.size > 0
+      ? TRADING_TOOLS.filter(t => !blockedSet.has(t.name))
+      : TRADING_TOOLS;
+
     const maxRounds = 10; // prevent infinite loops
     let finalText = '';
 
@@ -339,7 +345,7 @@ export class LLMAdvisor {
         model: config.anthropicModel,
         max_tokens: 2048,
         system: systemOverride ?? SKILLS_SYSTEM_PROMPT,
-        tools: TRADING_TOOLS,
+        tools: allowedTools,
         messages,
       });
 
@@ -409,10 +415,17 @@ export class LLMAdvisor {
     this.skillsHistory = [];
   }
 
+  // CRIT-8: Dangerous tools that /do should not have access to
+  // These can cause significant financial damage if misused
+  static readonly BLOCKED_DO_TOOLS = [
+    'close_all_positions',
+    'cancel_all_orders',
+  ];
+
   /**
-   * Execute a user command with full trading skills enabled.
-   * The LLM has access to all Hyperliquid operations.
-   * Use this from Telegram /execute or similar commands.
+   * Execute a user command with trading skills enabled.
+   * CRIT-8: Blocks dangerous tools (close_all_positions, cancel_all_orders).
+   * Use this from Telegram /do command.
    */
   async executeWithSkills(
     command: string,
@@ -438,7 +451,9 @@ export class LLMAdvisor {
 
     prompt += '\n\nUse the available tools to fulfill this request. Explain what you did.';
 
-    return await this.chatWithTools(prompt);
+    return await this.chatWithTools(prompt, undefined, {
+      blockedTools: LLMAdvisor.BLOCKED_DO_TOOLS,
+    });
   }
 
   async analyzeMarket(snapshots: MarketSnapshot[]): Promise<{ action: string; proposal?: TradeProposal; content?: string }> {

@@ -59,6 +59,57 @@
 
 ---
 
+## TODO: 감사 결과 수정 사항 (2026-02-13)
+
+> 전체 감사 리포트: `docs/audit-report-2026-02-13.md`
+
+### Phase 0: 메인넷 전 필수 (BLOCKING)
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| CRIT-1 | 마진 계산 틀림 (notional을 margin으로 오인) | `src/core/skills/code-skills.ts:232` | ✅ DONE |
+| CRIT-2 | Discretionary SL/TP가 거래소 주문 아님 (메모리만) | `src/strategies/discretionary/index.ts:169` | ✅ DONE |
+| CRIT-3 | Discretionary 포지션 DB 미저장 (PM2 재시작 시 유실) | `src/strategies/discretionary/index.ts:34` | ✅ DONE |
+| CRIT-4 | 크로스 레버리지 캡 없음 (총 노셔널 무제한) | `src/core/risk-manager.ts:138` | ✅ DONE |
+| CRIT-8 | /do 명령 무제한 LLM 실행 (위험 도구 접근) | `src/monitoring/telegram.ts` | ✅ DONE |
+| CRIT-9 | 대시보드 인증 없음 (CORS *, API 키 없음) | `src/dashboard/server.ts:39` | ✅ DONE |
+
+### Phase 1: 수학/알고리즘 수정
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| CRIT-5 | Scorer 충돌 페널티가 신호 파괴 (`min(L,S)` → 고정 `-2`로) | `src/strategies/discretionary/scorer.ts:242` | ✅ DONE |
+| CRIT-6 | 모멘텀 SL 무제한 (`2×ATR` → `min(2×ATR, 5%)` 캡) | `src/strategies/momentum/index.ts:235` | ✅ DONE |
+| CRIT-7 | TP가 raw 3×ATR → SL거리×1.5 R:R로 변경 | `src/strategies/momentum/index.ts:238` | ✅ DONE |
+| CRIT-10 | LLM SL/TP validation (레버리지별 SL 캡 + R:R 1.5 강제) | `src/core/skills/llm-decide.ts:598` | ✅ DONE |
+| WARN-3 | S/R 계산 naive (스윙 포인트 클러스터링으로 교체) | `src/strategies/discretionary/analyzer.ts:122` | ✅ DONE |
+| WARN-4 | OI 변화 시계열 오염 (타임스탬프 정규화) | `src/strategies/discretionary/analyzer.ts:206` | ✅ DONE |
+| WARN-5 | Kelly 기본 winRate 보수화 (0.5→0.45, threshold 5→10) | `src/strategies/base.ts:211` | ✅ DONE |
+| WARN-6 | 모멘텀 RSI 방향 확인 추가 (EMA만→RSI>45/55 필터) | `src/strategies/momentum/index.ts:172` | ✅ DONE |
+| WARN-7 | Polymarket 첫 사이클 extreme 감지 + Discretionary risk check | `src/data/sources/polymarket.ts:179` | ✅ DONE |
+| WARN-9 | DefiLlama inter-poll delta 임계값 3%로 조정 | `src/data/sources/defillama.ts:137` | ✅ DONE |
+
+### Phase 2: 시그널 검증
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| SIG-1 | 외부 소스별 예측 정확도 추적 테이블 추가 | `src/data/storage.ts` | ✅ DONE |
+| SIG-2 | 소스별 가중치 도입 (동일 가중치 → 예측력 비례) | `src/data/sources/index.ts` | ✅ DONE |
+| SIG-3 | CoinGecko 트렌딩 → "이미 급등" 경고 재분류 | `src/data/sources/coingecko.ts` | ✅ DONE |
+| SIG-4 | Equity Cross 상관관계 윈도우 2h → 7d | `src/config/strategies.ts` | ✅ DONE |
+
+### Phase 3: 인프라 강화
+
+| # | 이슈 | 파일 | 상태 |
+|---|------|------|------|
+| INFRA-1 | PM2 kill_timeout: 10000, max_memory: 1G | `ecosystem.config.cjs` | ✅ DONE |
+| INFRA-2 | 모든 HL API에 10초 타임아웃 | `src/exchanges/hyperliquid/client.ts` | ✅ DONE |
+| INFRA-3 | 전략 시작 전 프리플라이트 체크 | `src/core/engine.ts` | ✅ DONE |
+| INFRA-4 | 텔레그램 하트비트 + 자동 재연결 | `src/monitoring/telegram.ts` | ✅ DONE |
+| INFRA-5 | API 실패 서킷 브레이커 (3회 연속 → 일시정지) | `src/exchanges/hyperliquid/client.ts` | ✅ DONE |
+
+---
+
 ## 완료된 작업 (Done)
 
 ### Phase 1: Grid Bot ✅
@@ -274,6 +325,7 @@ ANTHROPIC_API_KEY=      # Claude API key (Discretionary용)
 ANTHROPIC_MODEL=        # LLM 모델 (default: claude-haiku-4-5-20251001)
 DASHBOARD_PORT=         # 웹 대시보드 포트 (default: 3847)
 DASHBOARD_URL=          # 외부 접속 URL (Telegram /dashboard용)
+DASHBOARD_API_KEY=      # 대시보드 API 키 (설정 시 /api/* 경로 인증 필수)
 ```
 
 ---

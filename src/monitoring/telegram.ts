@@ -10,6 +10,9 @@ const log = createChildLogger('telegram');
 
 let bot: Bot | null = null;
 let brainRef: Brain | null = null;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let heartbeatLogInterval: ReturnType<typeof setInterval> | null = null;
+let lastBotAlive = 0;
 
 export function setDiscretionaryStrategy(strategy: DiscretionaryStrategy): void {
   // Wire up callbacks so strategy can push messages to Telegram
@@ -188,8 +191,26 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
   bot.start({
     onStart: () => {
       log.info('Telegram bot started');
+      lastBotAlive = Date.now();
     },
   });
+
+  // Heartbeat: verify bot connection every 5 minutes
+  heartbeatInterval = setInterval(() => {
+    if (!bot) return;
+    bot.api.getMe().then(() => {
+      lastBotAlive = Date.now();
+    }).catch((err) => {
+      const downtime = Date.now() - lastBotAlive;
+      log.error({ err, downtimeMs: downtime }, 'Telegram heartbeat failed — bot may be disconnected');
+    });
+  }, 5 * 60_000);
+
+  // Periodic heartbeat log every 30 minutes
+  heartbeatLogInterval = setInterval(() => {
+    const aliveAgo = lastBotAlive > 0 ? Math.floor((Date.now() - lastBotAlive) / 1000) : -1;
+    log.info({ lastAliveSecsAgo: aliveAgo }, 'Telegram bot heartbeat: still connected');
+  }, 30 * 60_000);
 
   return bot;
 }
@@ -281,6 +302,14 @@ export async function sendTradeAlert(data: {
 }
 
 export function stopTelegram(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  if (heartbeatLogInterval) {
+    clearInterval(heartbeatLogInterval);
+    heartbeatLogInterval = null;
+  }
   if (bot) {
     bot.stop();
     bot = null;

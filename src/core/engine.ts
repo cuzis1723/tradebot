@@ -66,6 +66,9 @@ export class TradingEngine {
     // Connect to Hyperliquid
     await this.hlClient.connect();
 
+    // Pre-flight checks (connectivity + balance)
+    await this.preflight();
+
     // Get initial balance
     const balance = await this.hlClient.getBalance();
     this.riskManager.updatePortfolioValue(balance);
@@ -183,6 +186,47 @@ export class TradingEngine {
 
   private async executeSignal(_signal: unknown): Promise<void> {
     // Grid bot handles its own orders; this is for future strategies
+  }
+
+  /**
+   * Preflight check: verify exchange connectivity, account state, and balance
+   * before starting strategies. Fails fast if something is fundamentally broken.
+   */
+  private async preflight(): Promise<void> {
+    log.info('Running preflight checks...');
+
+    // 1. Test exchange connectivity via getAccountState()
+    let accountState;
+    try {
+      accountState = await this.hlClient.getAccountState();
+      log.info('Preflight: exchange connectivity OK');
+    } catch (err) {
+      log.error({ err }, 'PREFLIGHT FAILED: Cannot reach exchange. Check API key and network.');
+      throw new Error('Preflight failed: exchange connectivity check failed');
+    }
+
+    // 2. Verify balance > 0
+    let balance: Decimal;
+    try {
+      balance = await this.hlClient.getBalance();
+    } catch (err) {
+      log.error({ err }, 'PREFLIGHT FAILED: Cannot fetch balance');
+      throw new Error('Preflight failed: unable to fetch balance');
+    }
+
+    if (balance.lte(0)) {
+      log.error({ balance: balance.toString() }, 'PREFLIGHT FAILED: Account balance is zero');
+      throw new Error(`Preflight failed: balance $${balance.toFixed(2)} is zero`);
+    }
+
+    // 3. Log results
+    const positionCount = accountState.assetPositions.filter(
+      (ap) => parseFloat(ap.position.szi) !== 0,
+    ).length;
+    log.info(
+      { balance: balance.toString(), positions: positionCount },
+      'Preflight checks passed',
+    );
   }
 
   private async periodicCheck(): Promise<void> {

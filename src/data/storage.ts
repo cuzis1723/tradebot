@@ -148,6 +148,23 @@ function initSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_skill_logs_timestamp ON skill_logs(timestamp);
     CREATE INDEX IF NOT EXISTS idx_skill_logs_symbol ON skill_logs(symbol);
+
+    CREATE TABLE IF NOT EXISTS signal_accuracy (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      signal_name TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      score INTEGER NOT NULL,
+      outcome TEXT,
+      price_at_signal REAL,
+      price_after_1h REAL,
+      price_after_4h REAL,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_signal_accuracy_source_timestamp ON signal_accuracy(source, timestamp);
   `);
 }
 
@@ -383,6 +400,36 @@ export function getRecentSkillLogs(limit: number = 10, symbol?: string): unknown
   return database.prepare(`
     SELECT * FROM skill_logs ORDER BY timestamp DESC LIMIT ?
   `).all(limit);
+}
+
+export function logSignalAccuracy(
+  source: string,
+  signalName: string,
+  symbol: string,
+  direction: string,
+  score: number,
+  priceAtSignal: number,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO signal_accuracy (source, signal_name, symbol, direction, score, outcome, price_at_signal, timestamp)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+  `).run(source, signalName, symbol, direction, score, priceAtSignal, Date.now());
+  return Number(result.lastInsertRowid);
+}
+
+export function updateSignalOutcome(
+  id: number,
+  outcome: 'correct' | 'incorrect',
+  priceAfter1h?: number,
+  priceAfter4h?: number,
+): void {
+  const database = getDb();
+  database.prepare(`
+    UPDATE signal_accuracy
+    SET outcome = ?, price_after_1h = ?, price_after_4h = ?
+    WHERE id = ?
+  `).run(outcome, priceAfter1h ?? null, priceAfter4h ?? null, id);
 }
 
 export function closeDb(): void {

@@ -207,8 +207,8 @@ export abstract class Strategy extends EventEmitter {
     avgWinLossRatio?: number,
     fractionalKelly = 0.5,
   ): number {
-    // Use strategy's own stats if not provided
-    const p = winRate ?? (this.totalTrades >= 5 ? this.winningTrades / this.totalTrades : 0.5);
+    // Use strategy's own stats; with < 10 trades, be conservative (45% win rate)
+    const p = winRate ?? (this.totalTrades >= 10 ? this.winningTrades / this.totalTrades : 0.45);
     const b = avgWinLossRatio ?? 1.5; // default R:R assumption
 
     // Kelly formula: f* = (p * b - q) / b  where q = 1 - p

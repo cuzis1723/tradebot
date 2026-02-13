@@ -238,10 +238,9 @@ export class MarketScorer {
     const directionFlags = flags.filter(f => f.direction === directionBias && directionBias !== 'neutral');
     if (directionFlags.length >= 3) bonusScore += 2;
 
-    // --- Conflict penalty: deduct when both long and short signals are strong ---
-    const conflictPenalty = (longScore >= 3 && shortScore >= 3)
-      ? Math.min(longScore, shortScore)
-      : 0;
+    // --- Conflict penalty: mild deduction when signals contradict ---
+    // Cap at -2 to avoid destroying valid signals (CRIT-5: was min(L,S) which could nuke total)
+    const conflictPenalty = (longScore >= 3 && shortScore >= 3) ? 2 : 0;
 
     const totalScore = flags.reduce((sum, f) => sum + f.score, 0) + bonusScore - conflictPenalty;
 

@@ -67,6 +67,8 @@ export class DefiLlamaSource {
         if (!symbols) continue;
 
         const prevTVL = this.previousTVL.get(chain.name);
+        // WARN-9: This is inter-poll delta (~15min), not true 24h change
+        // Rename internally but keep field name for type compat; threshold adjusted in generateTriggerFlags
         const tvlChange24h = prevTVL !== undefined && prevTVL > 0
           ? ((chain.tvl - prevTVL) / prevTVL) * 100
           : 0;
@@ -132,8 +134,15 @@ export class DefiLlamaSource {
     const flags: InfoTriggerFlag[] = [];
 
     for (const data of tvlData) {
-      // Large TVL drop (>10% in 24h) → risk signal (CLAUDE.md: >10%/24h → +2)
-      if (data.tvlChange24h < -10) {
+      // "Total DeFi" uses real 24h from historical endpoint — use 10% threshold
+      // Per-chain uses 15min inter-poll delta — use 3% threshold (WARN-9)
+      const isHistorical = data.chain === 'Total DeFi';
+      const dropThreshold = isHistorical ? -10 : -3;
+      const surgeThreshold = isHistorical ? 10 : 3;
+      const label = isHistorical ? '24h' : '~15m';
+
+      // TVL drop → risk signal
+      if (data.tvlChange24h < dropThreshold) {
         for (const symbol of data.relevantSymbols) {
           flags.push({
             source: 'defillama',
@@ -141,13 +150,13 @@ export class DefiLlamaSource {
             score: 2,
             direction: 'short',
             relevantSymbol: symbol,
-            detail: `${data.chain} TVL drop: ${data.tvlChange24h.toFixed(1)}% 24h ($${(data.tvl / 1e9).toFixed(1)}B)`,
+            detail: `${data.chain} TVL drop: ${data.tvlChange24h.toFixed(1)}% ${label} ($${(data.tvl / 1e9).toFixed(1)}B)`,
           });
         }
       }
 
-      // Large TVL surge (>10% in 24h) → bullish signal (CLAUDE.md: >10%/24h → +2)
-      if (data.tvlChange24h > 10) {
+      // TVL surge → bullish signal
+      if (data.tvlChange24h > surgeThreshold) {
         for (const symbol of data.relevantSymbols) {
           flags.push({
             source: 'defillama',
@@ -155,12 +164,12 @@ export class DefiLlamaSource {
             score: 2,
             direction: 'long',
             relevantSymbol: symbol,
-            detail: `${data.chain} TVL surge: +${data.tvlChange24h.toFixed(1)}% 24h ($${(data.tvl / 1e9).toFixed(1)}B)`,
+            detail: `${data.chain} TVL surge: +${data.tvlChange24h.toFixed(1)}% ${label} ($${(data.tvl / 1e9).toFixed(1)}B)`,
           });
         }
       }
 
-      // 7d trend if available
+      // 7d trend (only from historical endpoint data)
       if (data.tvlChange7d !== 0 && Math.abs(data.tvlChange7d) > 10) {
         for (const symbol of data.relevantSymbols) {
           flags.push({

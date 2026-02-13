@@ -228,9 +228,11 @@ export function assessRisk(
   // Discretionary allocation: 55%
   const discAllocation = balance * 0.55;
 
-  // Margin used by open discretionary positions (rough estimate)
+  // Margin used by open discretionary positions
+  // margin = notional / leverage
   const usedMargin = positions.reduce((sum, p) => {
-    return sum + Math.abs(p.entryPrice * p.size);
+    const notional = Math.abs(p.entryPrice * p.size);
+    return sum + notional / (p.leverage || 5);
   }, 0);
 
   const availableCapital = Math.max(0, discAllocation - usedMargin);

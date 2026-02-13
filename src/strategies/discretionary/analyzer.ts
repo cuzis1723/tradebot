@@ -18,7 +18,7 @@ interface CandleData {
 export class MarketAnalyzer {
   private candleCache: Map<string, CandleData[]> = new Map();
   private midPriceCache: Map<string, number> = new Map();
-  private oiCache: Map<string, number> = new Map();
+  private oiCache: Map<string, { value: number; timestamp: number }> = new Map();
 
   // Per-cycle cache for getAssetInfos() — avoid redundant calls
   private assetInfoCache: { data: HLAssetInfo[]; timestamp: number } | null = null;
@@ -119,14 +119,105 @@ export class MarketAnalyzer {
       ? ((bollingerUpper - bollingerLower) / currentPrice) * 100
       : 0;
 
-    // Simple support/resistance from recent swing highs/lows (last 20 candles)
-    const recentCandles = candles.slice(-20);
-    const recentHighs = recentCandles.map(c => c.high);
-    const recentLows = recentCandles.map(c => c.low);
-    const resistance = Math.max(...recentHighs);
-    const support = Math.min(...recentLows);
+    // Support/resistance via swing-point clustering
+    const { support, resistance } = this.computeSwingPointSR(candles, currentPrice);
 
     return { rsi14, ema9, ema21, atr14, support, resistance, bollingerUpper, bollingerLower, bollingerWidth, atrAvg20 };
+  }
+
+  /**
+   * Compute support/resistance levels using swing-point clustering.
+   *
+   * 1. Identify swing highs (local maxima) and swing lows (local minima) using a
+   *    window of `order` candles on each side.
+   * 2. Cluster nearby levels within `clusterPct` of each other.
+   * 3. Weight clusters by the number of touches (more tested = stronger).
+   * 4. Pick the strongest resistance cluster above the current price and the
+   *    strongest support cluster below it.
+   * 5. Falls back to simple min/max of the lookback window if no clusters qualify.
+   */
+  private computeSwingPointSR(
+    candles: CandleData[],
+    currentPrice: number,
+    lookback = 50,
+    order = 3,
+    clusterPct = 0.0075, // 0.75% proximity threshold for clustering
+  ): { support: number; resistance: number } {
+    const slice = candles.slice(-lookback);
+
+    // --- 1. Find swing points ---
+    const swingLevels: number[] = [];
+
+    for (let i = order; i < slice.length - order; i++) {
+      // Swing high: candle[i].high >= all neighbours within `order`
+      let isSwingHigh = true;
+      let isSwingLow = true;
+
+      for (let j = 1; j <= order; j++) {
+        if (slice[i].high < slice[i - j].high || slice[i].high < slice[i + j].high) {
+          isSwingHigh = false;
+        }
+        if (slice[i].low > slice[i - j].low || slice[i].low > slice[i + j].low) {
+          isSwingLow = false;
+        }
+        if (!isSwingHigh && !isSwingLow) break;
+      }
+
+      if (isSwingHigh) swingLevels.push(slice[i].high);
+      if (isSwingLow) swingLevels.push(slice[i].low);
+    }
+
+    // If not enough swing points, fall back to simple min/max
+    if (swingLevels.length < 2) {
+      const recent = candles.slice(-20);
+      return {
+        support: Math.min(...recent.map(c => c.low)),
+        resistance: Math.max(...recent.map(c => c.high)),
+      };
+    }
+
+    // --- 2. Cluster nearby levels ---
+    // Sort levels so we can merge adjacent ones
+    swingLevels.sort((a, b) => a - b);
+
+    const clusters: { center: number; touches: number }[] = [];
+    for (const level of swingLevels) {
+      // Try to merge into an existing cluster
+      let merged = false;
+      for (const cluster of clusters) {
+        if (Math.abs(level - cluster.center) / cluster.center <= clusterPct) {
+          // Weighted average center
+          cluster.center =
+            (cluster.center * cluster.touches + level) / (cluster.touches + 1);
+          cluster.touches += 1;
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        clusters.push({ center: level, touches: 1 });
+      }
+    }
+
+    // --- 3. Pick strongest S/R relative to current price ---
+    const supportClusters = clusters
+      .filter(c => c.center < currentPrice)
+      .sort((a, b) => b.touches - a.touches || b.center - a.center); // most tested, then closest to price
+
+    const resistanceClusters = clusters
+      .filter(c => c.center > currentPrice)
+      .sort((a, b) => b.touches - a.touches || a.center - b.center); // most tested, then closest to price
+
+    // Fallback to simple min/max if no clusters on either side
+    const recent = candles.slice(-20);
+    const support = supportClusters.length > 0
+      ? supportClusters[0].center
+      : Math.min(...recent.map(c => c.low));
+    const resistance = resistanceClusters.length > 0
+      ? resistanceClusters[0].center
+      : Math.max(...recent.map(c => c.high));
+
+    return { support, resistance };
   }
 
   async analyze15mCandle(symbol: string): Promise<{ size: number; atr14: number; isLarge: boolean; direction: 'long' | 'short' } | null> {
@@ -210,12 +301,25 @@ export class MarketAnalyzer {
 
           if (assetInfo.openInterest > 0) {
             const cacheKey = `oi:${symbol}`;
-            const prevOI = this.oiCache.get(cacheKey);
+            const prevEntry = this.oiCache.get(cacheKey);
             const currentOI = assetInfo.openInterest;
-            if (prevOI !== undefined && prevOI > 0) {
-              oiChange1h = ((currentOI - prevOI) / prevOI) * 100;
+            const now = Date.now();
+            if (prevEntry && prevEntry.value > 0) {
+              const ageMs = now - prevEntry.timestamp;
+              // Only compare OI values within a reasonable time window (10 min – 2 h).
+              // Too old  → stale baseline, change % is misleading (not really "1h").
+              // Too fresh → near-zero delta, no useful signal.
+              const MIN_OI_AGE_MS = 10 * 60_000;  // 10 min
+              const MAX_OI_AGE_MS = 2 * 3600_000;  // 2 h
+              if (ageMs >= MIN_OI_AGE_MS && ageMs <= MAX_OI_AGE_MS) {
+                oiChange1h = ((currentOI - prevEntry.value) / prevEntry.value) * 100;
+              } else if (ageMs > MAX_OI_AGE_MS) {
+                // Baseline too old — discard and reset so next cycle gets a fresh start
+                log.debug({ symbol, ageMin: (ageMs / 60_000).toFixed(0) }, 'OI baseline stale, resetting');
+              }
             }
-            this.oiCache.set(cacheKey, currentOI);
+            // Always update the cached value with current timestamp
+            this.oiCache.set(cacheKey, { value: currentOI, timestamp: now });
           }
         }
       } catch (err) {
@@ -355,16 +459,22 @@ export class MarketAnalyzer {
       const assetInfo = assetInfos.find(a => a.name === coin);
       if (!assetInfo) continue;
 
-      // Use the oiCache to detect OI changes across scans
-      const prevOI = this.oiCache.get(`oi:${r.symbol}`);
-      if (prevOI !== undefined && prevOI > 0) {
-        const oiChangePct = ((assetInfo.openInterest - prevOI) / prevOI) * 100;
-        if (Math.abs(oiChangePct) > 5) {
-          r.score += 2;
-          r.flags.push(`OI Δ${oiChangePct > 0 ? '+' : ''}${oiChangePct.toFixed(1)}%`);
+      // Use the oiCache to detect OI changes across scans (time-aligned)
+      const now = Date.now();
+      const prevEntry = this.oiCache.get(`oi:${r.symbol}`);
+      if (prevEntry && prevEntry.value > 0) {
+        const ageMs = now - prevEntry.timestamp;
+        const MIN_OI_AGE_MS = 10 * 60_000;   // 10 min
+        const MAX_OI_AGE_MS = 2 * 3600_000;  // 2 h
+        if (ageMs >= MIN_OI_AGE_MS && ageMs <= MAX_OI_AGE_MS) {
+          const oiChangePct = ((assetInfo.openInterest - prevEntry.value) / prevEntry.value) * 100;
+          if (Math.abs(oiChangePct) > 5) {
+            r.score += 2;
+            r.flags.push(`OI Δ${oiChangePct > 0 ? '+' : ''}${oiChangePct.toFixed(1)}%`);
+          }
         }
       }
-      this.oiCache.set(`oi:${r.symbol}`, assetInfo.openInterest);
+      this.oiCache.set(`oi:${r.symbol}`, { value: assetInfo.openInterest, timestamp: now });
     }
 
     // Select: core always + top pre-screened by score
