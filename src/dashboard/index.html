@@ -246,6 +246,17 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     </div>
   </div>
 
+  <!-- Daily Reports -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">Daily Reports</div>
+      <span class="section-badge" id="reportsBadge">-</span>
+    </div>
+    <div class="timeline" id="reportsList">
+      <div class="tl-empty">No reports yet</div>
+    </div>
+  </div>
+
   <!-- Chart -->
   <div class="chart-section">
     <div class="chart-header">
@@ -782,17 +793,71 @@ async function shareToX() {
 }
 $('shareModal').addEventListener('click', e => { if (e.target === $('shareModal')) closeShare(); });
 
+// ── Reports ──
+function renderReports(reports) {
+  const wrap = $('reportsList');
+  const badge = $('reportsBadge');
+  if (!reports || reports.length === 0) {
+    wrap.innerHTML = '<div class="tl-empty">No reports yet</div>';
+    badge.textContent = '0';
+    return;
+  }
+  badge.textContent = reports.length;
+  wrap.innerHTML = reports.map(r => {
+    const icon = r.report_type === 'morning' ? '☀️' : '🌙';
+    const label = r.report_type === 'morning' ? 'Morning' : 'Evening';
+    const date = new Date(r.generated_at).toLocaleDateString('en-CA');
+    const time = r.report_type === 'morning' ? '06:00' : '18:00';
+    const sent = r.telegram_sent ? '✅' : '⏳';
+    return `<div class="tl-item" onclick="toggleReport(this, ${r.id})">
+      <div class="tl-dot" style="background:var(--accent)"></div>
+      <div class="tl-line"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="tl-type">${icon} ${label} Report</span>
+        <span class="tl-time">${date} ${time} KST ${sent}</span>
+      </div>
+      <div class="tl-reasoning report-detail" style="display:none"></div>
+    </div>`;
+  }).join('');
+}
+async function toggleReport(el, id) {
+  const detail = el.querySelector('.report-detail');
+  if (el.classList.contains('expanded')) {
+    el.classList.remove('expanded');
+    detail.style.display = 'none';
+    return;
+  }
+  if (!detail.dataset.loaded) {
+    detail.textContent = 'Loading...';
+    detail.style.display = 'block';
+    try {
+      const data = await fetchJson('/api/reports/' + id);
+      if (data && data.telegram_message) {
+        detail.innerHTML = data.telegram_message.replace(/\n/g, '<br>');
+      } else {
+        detail.textContent = 'No report content.';
+      }
+      detail.dataset.loaded = '1';
+    } catch { detail.textContent = 'Failed to load report.'; }
+  } else {
+    detail.style.display = 'block';
+  }
+  el.classList.add('expanded');
+}
+
 // ── Main ──
 async function refresh() {
-  const [status, equity, balance, pnlData, fills, positions, stats, decisions] = await Promise.all([
+  const [status, equity, balance, pnlData, fills, positions, stats, decisions, reports] = await Promise.all([
     fetchJson('/api/status'), fetchJson('/api/equity'), fetchJson('/api/balance'),
     fetchJson('/api/daily-pnl?days=90'), fetchJson('/api/fills?limit=50'),
     fetchJson('/api/positions'), fetchJson('/api/stats'), fetchJson('/api/decisions?limit=500'),
+    fetchJson('/api/reports?limit=10'),
   ]);
   renderAgent(status);
   renderMetrics(equity, balance, fills, stats);
   renderPositions(positions, equity?.equity);
   renderTimeline(decisions);
+  renderReports(reports);
   if (pnlData && pnlData.length > 0) { pnlCache = pnlData; updateChart(); }
 }
 animator = new SpriteAnimator('charCanvas');

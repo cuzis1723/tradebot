@@ -206,6 +206,20 @@ function initSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_narrative_history_source_name ON narrative_history(source, name);
     CREATE INDEX IF NOT EXISTS idx_narrative_history_timestamp ON narrative_history(timestamp);
 
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      report_type TEXT NOT NULL,
+      generated_at INTEGER NOT NULL,
+      period_start INTEGER NOT NULL,
+      period_end INTEGER NOT NULL,
+      data_json TEXT NOT NULL,
+      telegram_message TEXT,
+      telegram_sent INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_daily_reports_generated ON daily_reports(generated_at);
+
     CREATE TABLE IF NOT EXISTS prompt_overrides (
       key TEXT PRIMARY KEY,
       prompt_text TEXT NOT NULL,
@@ -650,6 +664,61 @@ export function getPromptHistory(key: string, limit: number = 5): Array<{
   `).all(key, limit) as Array<{
     id: number; key: string; change_description: string | null; timestamp: number;
   }>;
+}
+
+// ============================================================
+// Daily Reports
+// ============================================================
+
+export function saveReport(
+  reportType: string,
+  generatedAt: number,
+  periodStart: number,
+  periodEnd: number,
+  dataJson: string,
+  telegramMessage: string,
+  telegramSent: boolean,
+): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO daily_reports (report_type, generated_at, period_start, period_end, data_json, telegram_message, telegram_sent)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(reportType, generatedAt, periodStart, periodEnd, dataJson, telegramMessage, telegramSent ? 1 : 0);
+  return Number(result.lastInsertRowid);
+}
+
+export function getReports(limit: number = 30): Array<{
+  id: number; report_type: string; generated_at: number;
+  period_start: number; period_end: number; telegram_sent: number;
+}> {
+  const database = getDb();
+  return database.prepare(`
+    SELECT id, report_type, generated_at, period_start, period_end, telegram_sent
+    FROM daily_reports ORDER BY generated_at DESC LIMIT ?
+  `).all(limit) as Array<{
+    id: number; report_type: string; generated_at: number;
+    period_start: number; period_end: number; telegram_sent: number;
+  }>;
+}
+
+export function getReportById(id: number): {
+  id: number; report_type: string; generated_at: number;
+  period_start: number; period_end: number;
+  data_json: string; telegram_message: string; telegram_sent: number;
+} | undefined {
+  const database = getDb();
+  return database.prepare(`
+    SELECT * FROM daily_reports WHERE id = ?
+  `).get(id) as {
+    id: number; report_type: string; generated_at: number;
+    period_start: number; period_end: number;
+    data_json: string; telegram_message: string; telegram_sent: number;
+  } | undefined;
+}
+
+export function markReportSent(id: number): void {
+  const database = getDb();
+  database.prepare('UPDATE daily_reports SET telegram_sent = 1 WHERE id = ?').run(id);
 }
 
 export function closeDb(): void {

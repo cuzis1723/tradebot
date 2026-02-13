@@ -5,6 +5,7 @@ import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import type { DiscretionaryStrategy } from '../strategies/discretionary/index.js';
 import type { ScalpStrategy } from '../strategies/scalp/index.js';
 import type { Brain } from '../core/brain.js';
+import type { DailyReporter } from '../core/daily-report.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
 import { promptManager, type PromptKey } from '../core/prompt-manager.js';
 
@@ -13,6 +14,7 @@ const log = createChildLogger('telegram');
 let bot: Bot | null = null;
 let brainRef: Brain | null = null;
 let scalpRef: ScalpStrategy | null = null;
+let reporterRef: DailyReporter | null = null;
 
 // Pending prompt edit (awaiting user confirmation)
 let pendingEdit: {
@@ -50,6 +52,10 @@ export function setBrain(brain: Brain): void {
 
 export function setScalpStrategy(strategy: ScalpStrategy): void {
   scalpRef = strategy;
+}
+
+export function setDailyReporter(reporter: DailyReporter): void {
+  reporterRef = reporter;
 }
 
 export function initTelegram(_engine: Record<string, unknown>): Bot | null {
@@ -399,6 +405,24 @@ Respond with JSON only:
     await ctx.reply(result, { parse_mode: 'HTML' });
   });
 
+  // === /report — On-demand 리포트 생성 ===
+
+  bot.command('report', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!reporterRef) {
+      await ctx.reply('Daily reporter not active.');
+      return;
+    }
+    await ctx.reply('Generating report...');
+    try {
+      const msg = await reporterRef.generateOnDemand();
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, '/report command failed');
+      await ctx.reply('Failed to generate report.');
+    }
+  });
+
   // === /help ===
 
   bot.command('help', async (ctx: Context) => {
@@ -411,6 +435,7 @@ Respond with JSON only:
       + '/score - Latest scorer metrics\n'
       + '/do &lt;command&gt; - Talk to LLM (trade, ask, transfer, etc)\n'
       + '/prompt - Manage LLM system prompts\n'
+      + '/report - Generate on-demand report\n'
       + '/dashboard - Web dashboard link\n'
       + '\n<b>Scalp</b>\n'
       + '/scalp - Scalp positions &amp; status\n'

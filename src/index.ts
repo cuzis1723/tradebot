@@ -10,7 +10,8 @@ import {
   defaultEquityCrossConfig,
   defaultBrainConfig,
 } from './config/strategies.js';
-import { setDiscretionaryStrategy, setScalpStrategy, setBrain } from './monitoring/telegram.js';
+import { setDiscretionaryStrategy, setScalpStrategy, setBrain, setDailyReporter } from './monitoring/telegram.js';
+import { DailyReporter } from './core/daily-report.js';
 import { startDashboard } from './dashboard/server.js';
 import { config } from './config/index.js';
 import { createChildLogger } from './monitoring/logger.js';
@@ -50,9 +51,13 @@ async function main(): Promise<void> {
   setScalpStrategy(scalpStrategy);
   setBrain(engine.getBrain());
 
+  // Daily reporter (6AM / 6PM KST automatic Telegram reports + dashboard archive)
+  let dailyReporter: DailyReporter | null = null;
+
   // Graceful shutdown
   const shutdown = async () => {
     log.info('Shutdown signal received');
+    dailyReporter?.stop();
     await engine.stop();
     process.exit(0);
   };
@@ -69,6 +74,14 @@ async function main(): Promise<void> {
 
   // Start the engine (includes Brain startup)
   await engine.start();
+
+  // Start daily reporter after engine is running
+  dailyReporter = new DailyReporter({
+    getEngineStatus: () => engine.getStatus(),
+    getBrainState: () => engine.getBrain().getState(),
+  });
+  dailyReporter.start();
+  setDailyReporter(dailyReporter);
 
   // Start dashboard web server
   startDashboard(config.dashboardPort, {

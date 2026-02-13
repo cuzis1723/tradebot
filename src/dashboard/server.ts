@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChildLogger } from '../monitoring/logger.js';
-import { getDb, getRecentDecisions, getRecentTradeProposals } from '../data/storage.js';
+import { getDb, getRecentDecisions, getRecentTradeProposals, getReports, getReportById } from '../data/storage.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { config } from '../config/index.js';
 import type { EngineStatus } from '../core/types.js';
@@ -282,6 +282,49 @@ function apiEquity(_req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
+function apiReportsList(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '30', 10));
+
+  try {
+    const reports = getReports(limit);
+    json(res, reports.map(r => ({
+      id: r.id,
+      report_type: r.report_type,
+      generated_at: r.generated_at,
+      period_start: r.period_start,
+      period_end: r.period_end,
+      telegram_sent: r.telegram_sent === 1,
+    })));
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: reports list fetch failed');
+    json(res, [], 500);
+  }
+}
+
+function apiReportDetail(_req: IncomingMessage, res: ServerResponse, id: number): void {
+  try {
+    const report = getReportById(id);
+    if (!report) {
+      json(res, { error: 'Report not found' }, 404);
+      return;
+    }
+    json(res, {
+      id: report.id,
+      report_type: report.report_type,
+      generated_at: report.generated_at,
+      period_start: report.period_start,
+      period_end: report.period_end,
+      data: JSON.parse(report.data_json),
+      telegram_message: report.telegram_message,
+      telegram_sent: report.telegram_sent === 1,
+    });
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: report detail fetch failed');
+    json(res, { error: 'Failed to fetch report' }, 500);
+  }
+}
+
 // === Router ===
 
 const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void> = {
@@ -297,6 +340,7 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/proposals': apiProposals,
   '/api/fills': apiFills,
   '/api/equity': apiEquity,
+  '/api/reports': apiReportsList,
 };
 
 /** CRIT-9: Validate API key for /api/* routes if DASHBOARD_API_KEY is set */
@@ -334,6 +378,18 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
   // Auth check
   if (!checkAuth(req, res)) return;
+
+  // Pattern-based routes (e.g., /api/reports/123)
+  const reportMatch = pathname.match(/^\/api\/reports\/(\d+)$/);
+  if (reportMatch) {
+    try {
+      apiReportDetail(req, res, parseInt(reportMatch[1], 10));
+    } catch (err) {
+      log.error({ err, path: pathname }, 'Dashboard handler error');
+      json(res, { error: 'Internal error' }, 500);
+    }
+    return;
+  }
 
   const handler = routes[pathname];
   if (handler) {
