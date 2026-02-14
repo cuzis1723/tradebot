@@ -211,9 +211,14 @@ header { display: flex; align-items: center; justify-content: space-between; pad
     <!-- Metric Cards -->
     <div class="metrics">
       <div class="metric">
-        <div class="metric-label">Balance</div>
+        <div class="metric-label">Account Value</div>
         <div class="metric-value" id="mBalance">-</div>
         <div class="metric-sub" id="mBalanceSub"></div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Unrealized PnL</div>
+        <div class="metric-value" id="mUpnl">-</div>
+        <div class="metric-sub" id="mUpnlSub"></div>
       </div>
       <div class="metric">
         <div class="metric-label">Margin Used</div>
@@ -695,8 +700,12 @@ function renderMetrics(equity, balance, fills, stats) {
   if (equity) {
     currentEquity = equity.equity;
     $('mBalance').textContent = fmtUsdPlain(equity.equity);
+    $('mBalanceSub').textContent = '';
     const upnl = Number(equity.unrealizedPnl);
-    $('mBalanceSub').textContent = 'unrealized: ' + fmtUsd(upnl);
+    const upnlEl = $('mUpnl');
+    upnlEl.textContent = fmtUsd(upnl);
+    upnlEl.className = 'metric-value ' + pnlColor(upnl);
+    $('mUpnlSub').textContent = '';
   }
   if (balance) {
     $('mMargin').textContent = fmtUsdPlain(balance.marginUsed);
