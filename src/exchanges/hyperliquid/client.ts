@@ -276,12 +276,32 @@ export class HyperliquidClient {
       ? { limit: { tif: 'Ioc' as const } }
       : { limit: { tif: (params.tif ?? 'Gtc') as 'Gtc' | 'Ioc' | 'Alo' } };
 
+    // For market orders with price=0, auto-fetch mid price with 3% slippage
+    let price = parseFloat(params.price);
+    if (params.orderType === 'market' && price === 0) {
+      try {
+        const mids = await this.getAllMidPrices();
+        const coin = params.coin.replace('-PERP', '');
+        const midPrice = mids[coin]?.toNumber() ?? mids[params.coin]?.toNumber();
+        if (midPrice && midPrice > 0) {
+          price = params.isBuy ? midPrice * 1.03 : midPrice * 0.97;
+          log.info({ coin: params.coin, midPrice, slippagePrice: price }, 'Market order: auto-set price from mid');
+        } else {
+          log.warn({ coin: params.coin }, 'Market order: could not fetch mid price');
+          return { orderId: null, filled: false, avgPrice: null, error: 'Could not fetch mid price for market order' };
+        }
+      } catch (err) {
+        log.error({ err, coin: params.coin }, 'Market order: failed to fetch mid price');
+        return { orderId: null, filled: false, avgPrice: null, error: `Failed to fetch mid price: ${String(err)}` };
+      }
+    }
+
     try {
       const response = await this.sdk.exchange.placeOrder({
         coin: params.coin,
         is_buy: params.isBuy,
         sz: parseFloat(params.size),
-        limit_px: parseFloat(params.price),
+        limit_px: price,
         order_type: orderType,
         reduce_only: params.reduceOnly,
       });
