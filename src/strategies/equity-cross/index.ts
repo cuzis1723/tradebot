@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Strategy } from '../base.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
-import { logTrade } from '../../data/storage.js';
+import { logTrade, openPositionLifecycle, closePositionLifecycle } from '../../data/storage.js';
 import type {
   StrategyTier,
   TradingMode,
@@ -22,6 +22,7 @@ interface EquityCrossPosition {
   openedAt: number;
   slOrderId?: number;
   tpOrderId?: number;
+  lifecycleId?: number;
 }
 
 interface PriceHistory {
@@ -286,7 +287,7 @@ export class EquityCrossStrategy extends Strategy {
       });
       if (tpResult.orderId) tpOrderId = tpResult.orderId;
 
-      this.positions.push({
+      const pos: EquityCrossPosition = {
         symbol: cryptoSymbol,
         side,
         size: sz,
@@ -297,7 +298,26 @@ export class EquityCrossStrategy extends Strategy {
         openedAt: Date.now(),
         slOrderId,
         tpOrderId,
-      });
+      };
+
+      // Track lifecycle in DB so it appears in Trading Journal
+      try {
+        pos.lifecycleId = openPositionLifecycle({
+          strategyId: this.id,
+          symbol: cryptoSymbol,
+          side,
+          entryPrice,
+          entrySize: sz,
+          leverage: this.config.leverage,
+          stopLoss,
+          takeProfit,
+          entryRationale: `Equity trigger: ${equityTrigger} moved ${equityMovePct.toFixed(2)}%`,
+        });
+      } catch (e) {
+        this.log.debug({ err: e }, 'Failed to open lifecycle record');
+      }
+
+      this.positions.push(pos);
 
       logTrade(this.id, cryptoSymbol, side, entryPrice, sz, 0, 0, result.orderId?.toString());
 
@@ -381,6 +401,23 @@ export class EquityCrossStrategy extends Strategy {
       const pnl = (closePrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
 
       this.positions = this.positions.filter(p => p !== position);
+
+      // Close lifecycle record in DB
+      if (position.lifecycleId) {
+        try {
+          const heldMin = Math.floor((Date.now() - position.openedAt) / 60_000);
+          const pnlPct = position.entryPrice > 0 ? (pnl / (position.entryPrice * position.size)) * 100 : 0;
+          closePositionLifecycle(position.lifecycleId, {
+            closePrice,
+            closeReason: reason,
+            pnl,
+            pnlPct,
+            heldMinutes: heldMin,
+          });
+        } catch (e) {
+          this.log.debug({ err: e }, 'Failed to close lifecycle record');
+        }
+      }
 
       logTrade(this.id, position.symbol, closeSide, closePrice, position.size, 0, pnl);
       this.recordTrade(new Decimal(pnl));
