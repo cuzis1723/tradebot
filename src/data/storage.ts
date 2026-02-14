@@ -374,6 +374,17 @@ export function updateTradeProposalStatus(proposalUuid: string, status: string):
   `).run(status, proposalUuid);
 }
 
+export function getTradeProposalByUuid(proposalUuid: string): { rationale: string; confidence: string; trigger_score: number | null } | null {
+  const database = getDb();
+  const row = database.prepare(`
+    SELECT tp.rationale, tp.confidence, bd.trigger_score
+    FROM trade_proposals tp
+    LEFT JOIN brain_decisions bd ON tp.brain_decision_id = bd.id
+    WHERE tp.proposal_uuid = ?
+  `).get(proposalUuid) as { rationale: string; confidence: string; trigger_score: number | null } | undefined;
+  return row ?? null;
+}
+
 export function getRecentDecisions(limit: number = 50): unknown[] {
   const database = getDb();
   return database.prepare(`

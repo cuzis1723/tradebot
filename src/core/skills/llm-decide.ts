@@ -429,6 +429,7 @@ export async function managePosition(
   currentSnapshot: MarketSnapshot | undefined,
   regime: string,
   direction: string,
+  entryContext?: string | null,
 ): Promise<PositionManagementAction | null> {
   if (!advisor.isAvailable() || !currentSnapshot) return null;
 
@@ -445,6 +446,7 @@ export async function managePosition(
     `SL: $${position.stopLoss} | TP: $${position.takeProfit}`,
     `Unrealized PnL: $${unrealizedPnl.toFixed(2)} (${currentR.toFixed(2)}R)`,
     `Held: ${holdMinutes}min`,
+    entryContext ? `\n=== ENTRY REASONING ===\n${entryContext}` : '',
     ``,
     `=== MARKET CONDITIONS ===`,
     `Regime: ${regime} | Direction: ${direction}`,
@@ -453,7 +455,7 @@ export async function managePosition(
     `ATR: ${currentSnapshot.atr14.toFixed(2)}`,
     currentSnapshot.volumeRatio !== undefined ? `Volume Ratio: ${currentSnapshot.volumeRatio.toFixed(2)}x` : '',
     ``,
-    `MANAGE: What action should be taken? JSON only.`,
+    `MANAGE: Evaluate if the original thesis still holds. JSON only.`,
   ].filter(Boolean).join('\n');
 
   try {
