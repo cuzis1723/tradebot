@@ -5,7 +5,7 @@ import { RiskManager } from './risk-manager.js';
 import { Brain } from './brain.js';
 import { getHyperliquidClient, type HyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { initTelegram, sendAlert, sendTradeAlert, stopTelegram } from '../monitoring/telegram.js';
-import { getDb, closeDb } from '../data/storage.js';
+import { getDb, closeDb, openPositionLifecycle, getOpenLifecycles } from '../data/storage.js';
 import { promptManager } from './prompt-manager.js';
 import type { Strategy } from '../strategies/base.js';
 import type { ScalpStrategy } from '../strategies/scalp/index.js';
@@ -73,6 +73,9 @@ export class TradingEngine {
 
     // Pre-flight checks (connectivity + balance)
     await this.preflight();
+
+    // Reconcile exchange positions with DB (backfill missing lifecycle records)
+    await this.reconcilePositions();
 
     // Get initial balance
     const balance = await this.hlClient.getBalance();
@@ -351,6 +354,57 @@ export class TradingEngine {
       { balance: balance.toString(), positions: positionCount },
       'Preflight checks passed',
     );
+  }
+
+  /**
+   * Reconcile exchange positions with position_lifecycle DB.
+   * Backfills any exchange positions that have no matching open lifecycle record,
+   * so they appear in the Trading Journal.
+   */
+  private async reconcilePositions(): Promise<void> {
+    try {
+      const exchangePositions = await this.hlClient.getPositions();
+      const openLifecycles = getOpenLifecycles() as Array<{ symbol: string; status: string }>;
+
+      // Build set of symbols that already have an open lifecycle record
+      const trackedSymbols = new Set(openLifecycles.map(lc => lc.symbol));
+
+      let backfilled = 0;
+      for (const ap of exchangePositions) {
+        const p = ap.position;
+        const size = parseFloat(p.szi);
+        if (size === 0) continue;
+
+        const symbol = p.coin.includes('-PERP') ? p.coin : `${p.coin}-PERP`;
+        if (trackedSymbols.has(symbol)) continue;
+
+        // Position exists on exchange but not in lifecycle DB — backfill it
+        const entryPrice = parseFloat(p.entryPx);
+        const side = size > 0 ? 'buy' : 'sell';
+        const leverage = p.leverage?.value ?? 1;
+
+        openPositionLifecycle({
+          strategyId: 'unknown',
+          symbol,
+          side,
+          entryPrice,
+          entrySize: Math.abs(size),
+          leverage,
+          entryRationale: 'Backfilled from exchange during startup reconciliation',
+        });
+
+        backfilled++;
+        log.info({ symbol, side, entryPrice, size: Math.abs(size) }, 'Backfilled position lifecycle');
+      }
+
+      if (backfilled > 0) {
+        log.info({ backfilled }, 'Position reconciliation: backfilled missing lifecycle records');
+      } else {
+        log.debug('Position reconciliation: all positions already tracked');
+      }
+    } catch (err) {
+      log.warn({ err }, 'Position reconciliation failed (non-fatal)');
+    }
   }
 
   private async periodicCheck(): Promise<void> {
