@@ -230,6 +230,11 @@ export class MarketScorer {
     let directionBias: 'long' | 'short' | 'neutral' = 'neutral';
     if (longScore > shortScore && longScore >= 3) directionBias = 'long';
     else if (shortScore > longScore && shortScore >= 3) directionBias = 'short';
+    else if (longScore === shortScore && longScore >= 3) {
+      // Tie-break: follow price action (4h > 1h momentum)
+      if (snapshot.change4h > 1) directionBias = 'long';
+      else if (snapshot.change4h < -1) directionBias = 'short';
+    }
 
     // --- Bonus points ---
     let bonusScore = 0;
@@ -287,7 +292,14 @@ export class MarketScorer {
         }
         if (longScore > shortScore && longScore >= 3) score.directionBias = 'long';
         else if (shortScore > longScore && shortScore >= 3) score.directionBias = 'short';
-        else score.directionBias = 'neutral';
+        else if (longScore === shortScore && longScore >= 3) {
+          // Tie-break: follow price action
+          if (snapshot.change4h > 1) score.directionBias = 'long';
+          else if (snapshot.change4h < -1) score.directionBias = 'short';
+          else score.directionBias = 'neutral';
+        } else {
+          score.directionBias = 'neutral';
+        }
       }
 
       scores.push(score);
