@@ -30,7 +30,7 @@ import {
   reviewTrade,
   planScenarios,
 } from './llm-decide.js';
-import { logSkillExecution } from '../../data/storage.js';
+import { logSkillExecution, getTradeProposalByUuid } from '../../data/storage.js';
 import { createChildLogger } from '../../monitoring/logger.js';
 import { LLMAdvisor } from '../../strategies/discretionary/llm-advisor.js';
 import type { ComprehensiveResponse } from '../../strategies/discretionary/llm-advisor.js';
@@ -409,7 +409,18 @@ export class SkillPipeline {
       // Skip LLM call if position is comfortably within -0.5R to +0.5R (no action needed)
       if (Math.abs(currentR) < 0.5) continue;
 
-      const action = await managePosition(this.advisor, pos, snapshot, regime, direction);
+      // Look up original entry reasoning from DB
+      let entryContext: string | null = null;
+      try {
+        const proposal = getTradeProposalByUuid(pos.proposalId);
+        if (proposal) {
+          const parts = [`Rationale: ${proposal.rationale}`, `Confidence: ${proposal.confidence}`];
+          if (proposal.trigger_score != null) parts.push(`Trigger Score: ${proposal.trigger_score}`);
+          entryContext = parts.join('\n');
+        }
+      } catch { /* DB lookup failure is non-fatal */ }
+
+      const action = await managePosition(this.advisor, pos, snapshot, regime, direction, entryContext);
       if (action && action.action !== 'hold') {
         actions.push(action);
       }
