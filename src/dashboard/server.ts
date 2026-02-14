@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createChildLogger } from '../monitoring/logger.js';
-import { getDb, getRecentDecisions, getRecentTradeProposals, getReports, getReportById } from '../data/storage.js';
+import { getDb, getRecentDecisions, getRecentTradeProposals, getReports, getReportById, getRecentLLMCalls, getRecentSkillLogs, getRecentLessons, getLessonStats, getRecentNarratives } from '../data/storage.js';
 import { getHyperliquidClient } from '../exchanges/hyperliquid/client.js';
 import { config } from '../config/index.js';
 import type { EngineStatus } from '../core/types.js';
@@ -389,6 +389,86 @@ function apiReportDetail(_req: IncomingMessage, res: ServerResponse, id: number)
   }
 }
 
+// === DB exploration APIs ===
+
+function apiDbSummary(_req: IncomingMessage, res: ServerResponse): void {
+  try {
+    const db = getDb();
+    const tables = ['trades', 'brain_decisions', 'trade_proposals', 'llm_logs', 'skill_logs',
+      'trade_lessons', 'signal_accuracy', 'narrative_history', 'daily_pnl', 'llm_usage_daily',
+      'daily_reports', 'prompt_overrides', 'strategy_state'] as const;
+
+    const summary: Record<string, number> = {};
+    for (const table of tables) {
+      const row = db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get() as { count: number };
+      summary[table] = row.count;
+    }
+    json(res, summary);
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: db-summary failed');
+    json(res, { error: 'Failed' }, 500);
+  }
+}
+
+function apiLlmLogs(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(200, parseInt(url.searchParams.get('limit') ?? '50', 10));
+  try {
+    json(res, getRecentLLMCalls(limit));
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: llm-logs failed');
+    json(res, [], 500);
+  }
+}
+
+function apiSkillLogs(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '30', 10));
+  const symbol = url.searchParams.get('symbol') ?? undefined;
+  try {
+    json(res, getRecentSkillLogs(limit, symbol));
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: skill-logs failed');
+    json(res, [], 500);
+  }
+}
+
+function apiLessons(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(100, parseInt(url.searchParams.get('limit') ?? '30', 10));
+  const symbol = url.searchParams.get('symbol') ?? undefined;
+  try {
+    json(res, { lessons: getRecentLessons(limit, symbol), stats: getLessonStats(symbol) });
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: lessons failed');
+    json(res, { lessons: [], stats: {} }, 500);
+  }
+}
+
+function apiNarratives(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const hours = Math.min(168, parseInt(url.searchParams.get('hours') ?? '24', 10));
+  try {
+    json(res, getRecentNarratives(hours));
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: narratives failed');
+    json(res, [], 500);
+  }
+}
+
+function apiSignalAccuracy(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(200, parseInt(url.searchParams.get('limit') ?? '50', 10));
+  try {
+    const db = getDb();
+    const rows = db.prepare('SELECT * FROM signal_accuracy ORDER BY timestamp DESC LIMIT ?').all(limit);
+    json(res, rows);
+  } catch (err) {
+    log.warn({ err }, 'Dashboard: signal-accuracy failed');
+    json(res, [], 500);
+  }
+}
+
 // === Router ===
 
 const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void> = {
@@ -407,6 +487,12 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/equity': apiEquity,
   '/api/reports': apiReportsList,
   '/api/candles': apiCandles,
+  '/api/db-summary': apiDbSummary,
+  '/api/llm-logs': apiLlmLogs,
+  '/api/skill-logs': apiSkillLogs,
+  '/api/lessons': apiLessons,
+  '/api/narratives': apiNarratives,
+  '/api/signal-accuracy': apiSignalAccuracy,
 };
 
 /** CRIT-9: Validate API key for /api/* routes if DASHBOARD_API_KEY is set */
