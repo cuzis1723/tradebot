@@ -36,6 +36,7 @@ export class ScalpStrategy extends Strategy {
   private positions: ActiveDiscretionaryPosition[] = [];
   private holdTimeCheckInterval: ReturnType<typeof setInterval> | null = null;
   private lossCooldownTimer: ReturnType<typeof setTimeout> | null = null;
+  private closeRetryCount: Map<string, number> = new Map();
 
   // Callback to send Telegram messages
   public onMessage: ((msg: string) => Promise<void>) | null = null;
@@ -453,6 +454,7 @@ export class ScalpStrategy extends Strategy {
       const pnl = (closePrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+      this.closeRetryCount.delete(position.proposalId);
       this.persistPositions();
 
       if (position.lifecycleId) {
@@ -502,13 +504,37 @@ export class ScalpStrategy extends Strategy {
   // === Max Hold Time Check ===
 
   private async checkMaxHoldTime(): Promise<void> {
+    const MAX_CLOSE_RETRIES = 3;
     const now = Date.now();
     for (const position of [...this.positions]) {
       const heldMs = now - position.openedAt;
       if (heldMs > this.config.maxHoldTimeMs) {
+        const retryKey = position.proposalId;
+        const retries = this.closeRetryCount.get(retryKey) ?? 0;
+
+        if (retries >= MAX_CLOSE_RETRIES) {
+          // Already failed too many times — skip to avoid spam
+          continue;
+        }
+
         const heldMin = Math.floor(heldMs / 60_000);
-        this.log.warn({ symbol: position.symbol, heldMin }, 'Scalp max hold time exceeded, force-closing');
+        this.log.warn({ symbol: position.symbol, heldMin, attempt: retries + 1 }, 'Scalp max hold time exceeded, force-closing');
         const result = await this.closePosition(position, 'max_hold_time');
+
+        // If position is still open (close failed), increment retry counter
+        if (this.positions.some(p => p.proposalId === position.proposalId)) {
+          this.closeRetryCount.set(retryKey, retries + 1);
+          if (retries + 1 >= MAX_CLOSE_RETRIES) {
+            this.log.error({ symbol: position.symbol, retries: retries + 1 }, 'Scalp close failed max retries — manual intervention needed');
+            if (this.onMessage) {
+              this.onMessage(`🚨 <b>Scalp Close FAILED ${MAX_CLOSE_RETRIES}x</b>\n${position.symbol} — manual /scalpclose needed`).catch(() => {});
+            }
+          }
+        } else {
+          // Successfully closed — clean up retry counter
+          this.closeRetryCount.delete(retryKey);
+        }
+
         if (this.onMessage) {
           this.onMessage(`⏰ <b>Scalp Max Hold Time</b>\n${result}`).catch(() => {});
         }

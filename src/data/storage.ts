@@ -239,6 +239,21 @@ function initSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_prompt_history_key ON prompt_history(key);
     CREATE INDEX IF NOT EXISTS idx_prompt_history_timestamp ON prompt_history(timestamp);
 
+    CREATE TABLE IF NOT EXISTS telegram_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      direction TEXT NOT NULL,
+      chat_id TEXT,
+      message_id INTEGER,
+      command TEXT,
+      text TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tg_messages_timestamp ON telegram_messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_tg_messages_direction ON telegram_messages(direction);
+    CREATE INDEX IF NOT EXISTS idx_tg_messages_command ON telegram_messages(command);
+
     CREATE TABLE IF NOT EXISTS position_lifecycle (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       strategy_id TEXT NOT NULL,
@@ -858,6 +873,51 @@ export function getReportById(id: number): {
 export function markReportSent(id: number): void {
   const database = getDb();
   database.prepare('UPDATE daily_reports SET telegram_sent = 1 WHERE id = ?').run(id);
+}
+
+// ============================================================
+// Telegram Messages
+// ============================================================
+
+export function saveTelegramMessage(
+  direction: 'incoming' | 'outgoing',
+  text: string,
+  chatId?: string,
+  messageId?: number,
+  command?: string,
+): void {
+  try {
+    const database = getDb();
+    database.prepare(`
+      INSERT INTO telegram_messages (direction, chat_id, message_id, command, text, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(direction, chatId ?? null, messageId ?? null, command ?? null, text, Date.now());
+  } catch {
+    // Silently ignore — never let message logging break the bot
+  }
+}
+
+export function getRecentTelegramMessages(limit: number = 50, direction?: 'incoming' | 'outgoing'): Array<{
+  id: number; direction: string; chat_id: string | null; message_id: number | null;
+  command: string | null; text: string; timestamp: number;
+}> {
+  const database = getDb();
+  if (direction) {
+    return database.prepare(`
+      SELECT id, direction, chat_id, message_id, command, text, timestamp
+      FROM telegram_messages WHERE direction = ? ORDER BY timestamp DESC LIMIT ?
+    `).all(direction, limit) as Array<{
+      id: number; direction: string; chat_id: string | null; message_id: number | null;
+      command: string | null; text: string; timestamp: number;
+    }>;
+  }
+  return database.prepare(`
+    SELECT id, direction, chat_id, message_id, command, text, timestamp
+    FROM telegram_messages ORDER BY timestamp DESC LIMIT ?
+  `).all(limit) as Array<{
+    id: number; direction: string; chat_id: string | null; message_id: number | null;
+    command: string | null; text: string; timestamp: number;
+  }>;
 }
 
 export function closeDb(): void {
