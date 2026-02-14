@@ -191,8 +191,8 @@ export class DailyReporter {
       log.warn({ err }, 'Failed to fetch account data for report');
     }
 
-    const unrealizedPnl = openPositions.reduce((s, p) => s + p.unrealizedPnl, 0);
-    const equity = balance + unrealizedPnl;
+    // balance (spot USDC total) already includes unrealized PnL in Hyperliquid unified account
+    const equity = balance;
     const freeMargin = balance - marginUsed;
 
     // Period trades (from exchange fills)
