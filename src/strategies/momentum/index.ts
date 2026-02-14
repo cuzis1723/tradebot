@@ -257,7 +257,8 @@ export class MomentumStrategy extends Strategy {
     const effectiveLeverage = Math.max(1, Math.round(this.config.leverage * leverageMultiplier));
     const notional = capitalForTrade.mul(effectiveLeverage).mul(this.lossSizeMultiplier);
     const size = notional.div(currentPrice);
-    const sz = parseFloat(size.toFixed(4));
+    const szDecimals = await hl.getSzDecimals(symbol);
+    const sz = parseFloat(size.toFixed(szDecimals));
 
     if (sz <= 0) return;
 

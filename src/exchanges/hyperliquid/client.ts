@@ -29,6 +29,11 @@ export class HyperliquidClient {
   private circuitOpenedAt = 0;
   private circuitOpen = false;
 
+  // szDecimals cache (refreshed every 1h)
+  private szDecimalsCache: Map<string, number> = new Map();
+  private szDecimalsCacheTime = 0;
+  private static SZ_DECIMALS_TTL = 60 * 60 * 1000; // 1 hour
+
   constructor() {
     // Derive wallet address from private key
     const wallet = new ethers.Wallet(config.hlPrivateKey);
@@ -548,6 +553,22 @@ export class HyperliquidClient {
       log.error({ err }, 'Failed to get funding rates');
       return [];
     }
+  }
+
+  /** Get szDecimals for a symbol (cached, 1h TTL). Returns 4 as safe fallback. */
+  async getSzDecimals(symbol: string): Promise<number> {
+    const now = Date.now();
+    if (this.szDecimalsCache.size === 0 || now - this.szDecimalsCacheTime > HyperliquidClient.SZ_DECIMALS_TTL) {
+      const assets = await this.getAssetInfos();
+      this.szDecimalsCache.clear();
+      for (const a of assets) {
+        // Store both formats: "BTC" and "BTC-PERP"
+        this.szDecimalsCache.set(a.name, a.szDecimals);
+        this.szDecimalsCache.set(`${a.name}-PERP`, a.szDecimals);
+      }
+      this.szDecimalsCacheTime = now;
+    }
+    return this.szDecimalsCache.get(symbol) ?? this.szDecimalsCache.get(symbol.replace('-PERP', '')) ?? 4;
   }
 
   async getAssetInfos(): Promise<HLAssetInfo[]> {

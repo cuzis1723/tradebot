@@ -232,7 +232,8 @@ export class EquityCrossStrategy extends Strategy {
     const capitalPerPosition = this.allocatedCapital.mul(sizeFraction);
     const notional = capitalPerPosition.mul(this.config.leverage).mul(this.lossSizeMultiplier);
     const size = notional.div(currentPrice);
-    const sz = parseFloat(size.toFixed(4));
+    const szDecimals = await hl.getSzDecimals(cryptoSymbol);
+    const sz = parseFloat(size.toFixed(szDecimals));
 
     if (sz <= 0) return;
 
