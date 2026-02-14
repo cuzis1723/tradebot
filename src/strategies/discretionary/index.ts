@@ -211,11 +211,12 @@ export class DiscretionaryStrategy extends Strategy {
       case 'partial_close': {
         const closePct = action.partialClosePct ?? 50;
         const closeSize = position.size * (closePct / 100);
+        const closeSzDecimals = await hl.getSzDecimals(position.symbol);
         try {
           const result = await hl.placeOrder({
             coin: position.symbol,
             isBuy: position.side === 'sell',
-            size: closeSize.toFixed(4),
+            size: closeSize.toFixed(closeSzDecimals),
             price: '0',
             orderType: 'market',
             reduceOnly: true,
@@ -236,7 +237,7 @@ export class DiscretionaryStrategy extends Strategy {
               this.log.debug({ err: e }, 'Failed to log management action');
             }
           }
-          return `Partial close ${closePct}%: ${position.symbol} closed ${closeSize.toFixed(4)} @ $${closePrice.toFixed(2)} PnL: $${pnl.toFixed(2)} (${action.reasoning})`;
+          return `Partial close ${closePct}%: ${position.symbol} closed ${closeSize.toFixed(closeSzDecimals)} @ $${closePrice.toFixed(2)} PnL: $${pnl.toFixed(2)} (${action.reasoning})`;
         } catch (err) {
           this.log.error({ err }, 'Failed to partial close');
           return `Failed to partial close: ${String(err)}`;
@@ -278,8 +279,14 @@ export class DiscretionaryStrategy extends Strategy {
     const effectiveSize = Math.min(proposal.size, Math.max(kellyMax, 0.05)); // floor at 5%
     const capitalForTrade = this.allocatedCapital.mul(effectiveSize).mul(this.lossSizeMultiplier);
     const sizeInUnits = capitalForTrade.mul(proposal.leverage).div(proposal.entryPrice);
-    const sz = parseFloat(sizeInUnits.toFixed(4));
+    const szDecimals = await hl.getSzDecimals(proposal.symbol);
+    const sz = parseFloat(sizeInUnits.toFixed(szDecimals));
     const notional = capitalForTrade.mul(proposal.leverage).toNumber();
+
+    if (sz <= 0) {
+      this.log.warn({ symbol: proposal.symbol, raw: sizeInUnits.toString(), szDecimals }, 'Position size too small after rounding');
+      return 'Execution blocked: position size too small for this asset';
+    }
 
     // WARN-6: Cross-exposure check before execution
     if (!this.canOpenPosition(proposal.symbol, notional)) {
