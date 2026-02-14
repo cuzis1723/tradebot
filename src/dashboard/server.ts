@@ -296,17 +296,19 @@ function apiFills(req: IncomingMessage, res: ServerResponse): void {
 function apiEquity(_req: IncomingMessage, res: ServerResponse): void {
   const hl = getHyperliquidClient();
   Promise.all([hl.getAccountState(), hl.getSpotBalances()]).then(([state, spotState]) => {
+    // Spot balance already includes unrealized PnL (Hyperliquid unified account)
     const totalBalance = spotState.balances
       .filter(b => b.coin.toUpperCase().includes('USDC'))
       .reduce((sum: number, b) => sum + parseFloat(b.total), 0);
 
+    // Perp unrealized PnL calculated separately for display only
     const positions = state.assetPositions.filter(ap => parseFloat(ap.position.szi) !== 0);
     const unrealizedPnl = positions.reduce((sum, ap) => sum + parseFloat(ap.position.unrealizedPnl), 0);
 
     json(res, {
       balance: totalBalance,
       unrealizedPnl,
-      equity: totalBalance + unrealizedPnl,
+      equity: totalBalance,  // spot balance IS the account value (already includes unrealized PnL)
       timestamp: Date.now(),
     });
   }).catch(err => {
