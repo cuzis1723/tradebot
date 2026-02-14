@@ -8,7 +8,7 @@ import type { Brain } from '../core/brain.js';
 import type { DailyReporter } from '../core/daily-report.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
 import { promptManager, type PromptKey } from '../core/prompt-manager.js';
-import { getRecentLifecycles } from '../data/storage.js';
+import { getRecentLifecycles, saveTelegramMessage } from '../data/storage.js';
 
 const log = createChildLogger('telegram');
 
@@ -67,6 +67,16 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
 
   bot = new Bot(config.tgBotToken);
 
+  // Log all incoming messages to DB
+  bot.use(async (ctx, next) => {
+    if (ctx.message?.text && isAuthorized(ctx)) {
+      const text = ctx.message.text;
+      const cmd = text.startsWith('/') ? text.split(/\s+/)[0].substring(1).split('@')[0] : undefined;
+      logIncoming(ctx, cmd);
+    }
+    await next();
+  });
+
   // === /balance — 잔액 및 포지션 ===
 
   bot.command('balance', async (ctx: Context) => {
@@ -108,10 +118,10 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
         msg += `\nNo open positions.`;
       }
 
-      await ctx.reply(msg, { parse_mode: 'HTML' });
+      await replyAndLog(ctx, msg, { parse_mode: 'HTML' });
     } catch (err) {
       log.error({ err }, 'Balance fetch failed');
-      await ctx.reply('Failed to fetch account balance.');
+      await replyAndLog(ctx, 'Failed to fetch account balance.');
     }
   });
 
@@ -120,7 +130,7 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
   bot.command('status', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!brainRef) {
-      await ctx.reply('Brain not active.');
+      await replyAndLog(ctx, 'Brain not active.');
       return;
     }
     const formatted = brainRef.formatState();
@@ -132,14 +142,14 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
   bot.command('score', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!brainRef) {
-      await ctx.reply('Brain not active.');
+      await replyAndLog(ctx, 'Brain not active.');
       return;
     }
     const state = brainRef.getState();
     const scores = state.latestScores;
 
     if (!scores || scores.length === 0) {
-      await ctx.reply('No score data yet. Wait for next scan cycle.');
+      await replyAndLog(ctx, 'No score data yet. Wait for next scan cycle.');
       return;
     }
 
@@ -160,15 +170,15 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
   bot.command('do', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!brainRef) {
-      await ctx.reply('Brain not active.');
+      await replyAndLog(ctx, 'Brain not active.');
       return;
     }
     const command = ctx.message?.text?.replace(/^\/do\s*/, '').trim();
     if (!command) {
-      await ctx.reply('Usage: /do &lt;command&gt;\n\nExamples:\n/do 잔고 확인해\n/do spot에서 perp으로 400 USDC 옮겨\n/do ETH 롱 0.01개 5배 레버리지\n/do 모든 포지션 정리해\n/do 펀딩레이트 높은 거 보여줘\n/do 왜 ETH가 떨어지고 있어?', { parse_mode: 'HTML' });
+      await replyAndLog(ctx, 'Usage: /do &lt;command&gt;\n\nExamples:\n/do 잔고 확인해\n/do spot에서 perp으로 400 USDC 옮겨\n/do ETH 롱 0.01개 5배 레버리지\n/do 모든 포지션 정리해\n/do 펀딩레이트 높은 거 보여줘\n/do 왜 ETH가 떨어지고 있어?', { parse_mode: 'HTML' });
       return;
     }
-    await ctx.reply('Executing...');
+    await replyAndLog(ctx, 'Executing...');
     try {
       const advisor = brainRef.getAdvisor();
       const state = brainRef.getState();
@@ -181,7 +191,7 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
       await sendLongMessage(ctx, result);
     } catch (err) {
       log.error({ err }, '/do command failed');
-      await ctx.reply(`Execution failed: ${String(err)}`);
+      await replyAndLog(ctx, `Execution failed: ${String(err)}`);
     }
   });
 
@@ -190,7 +200,7 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
   bot.command('dashboard', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     const url = config.dashboardUrl ?? 'http://89.167.31.117:3847';
-    await ctx.reply(`<b>Web Dashboard</b>\n\n<a href="${url}">${url}</a>`, { parse_mode: 'HTML' });
+    await replyAndLog(ctx, `<b>Web Dashboard</b>\n\n<a href="${url}">${url}</a>`, { parse_mode: 'HTML' });
   });
 
   // === /prompt — LLM 시스템 프롬프트 관리 ===
@@ -211,7 +221,7 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
         msg += `${i + 1}. <code>${e.key}</code> — ${e.description}${tag}\n`;
       });
       msg += `\nCommands:\n/prompt view &lt;key&gt;\n/prompt edit &lt;key&gt; &lt;instruction&gt;\n/prompt reset &lt;key&gt;\n/prompt history &lt;key&gt;`;
-      await ctx.reply(msg, { parse_mode: 'HTML' });
+      await replyAndLog(ctx, msg, { parse_mode: 'HTML' });
       return;
     }
 
@@ -219,7 +229,7 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
     if (subcommand === 'view') {
       const key = parts[1];
       if (!key || !promptManager.isValidKey(key)) {
-        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        await replyAndLog(ctx, `Invalid key. Use /prompt list to see available keys.`);
         return;
       }
       const entries = promptManager.listAll();
@@ -236,20 +246,20 @@ export function initTelegram(_engine: Record<string, unknown>): Bot | null {
     if (subcommand === 'edit') {
       const key = parts[1];
       if (!key || !promptManager.isValidKey(key)) {
-        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        await replyAndLog(ctx, `Invalid key. Use /prompt list to see available keys.`);
         return;
       }
       const instruction = parts.slice(2).join(' ');
       if (!instruction) {
-        await ctx.reply(`Usage: /prompt edit &lt;key&gt; &lt;instruction&gt;\n\nExample: /prompt edit decide_trade 좀 더 보수적으로, 레버리지 최대 10x`, { parse_mode: 'HTML' });
+        await replyAndLog(ctx, `Usage: /prompt edit &lt;key&gt; &lt;instruction&gt;\n\nExample: /prompt edit decide_trade 좀 더 보수적으로, 레버리지 최대 10x`, { parse_mode: 'HTML' });
         return;
       }
       if (!brainRef) {
-        await ctx.reply('Brain not active.');
+        await replyAndLog(ctx, 'Brain not active.');
         return;
       }
 
-      await ctx.reply('Editing prompt...');
+      await replyAndLog(ctx, 'Editing prompt...');
 
       try {
         const advisor = brainRef.getAdvisor();
@@ -296,7 +306,7 @@ Respond with JSON only:
         const warnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
 
         if (!newText || newText.length < 50) {
-          await ctx.reply('LLM returned invalid prompt (too short). Edit cancelled.');
+          await replyAndLog(ctx, 'LLM returned invalid prompt (too short). Edit cancelled.');
           return;
         }
 
@@ -316,10 +326,10 @@ Respond with JSON only:
         }
         msg += `\nNew length: ${newText.length} chars (was ${currentText.length})\n`;
         msg += `\n<b>Apply this change? Reply Y to confirm.</b>`;
-        await ctx.reply(msg, { parse_mode: 'HTML' });
+        await replyAndLog(ctx, msg, { parse_mode: 'HTML' });
       } catch (err) {
         log.error({ err }, '/prompt edit failed');
-        await ctx.reply(`Edit failed: ${String(err)}`);
+        await replyAndLog(ctx, `Edit failed: ${String(err)}`);
       }
       return;
     }
@@ -328,11 +338,11 @@ Respond with JSON only:
     if (subcommand === 'reset') {
       const key = parts[1];
       if (!key || !promptManager.isValidKey(key)) {
-        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        await replyAndLog(ctx, `Invalid key. Use /prompt list to see available keys.`);
         return;
       }
       promptManager.reset(key as PromptKey);
-      await ctx.reply(`Prompt <code>${key}</code> reset to default.`, { parse_mode: 'HTML' });
+      await replyAndLog(ctx, `Prompt <code>${key}</code> reset to default.`, { parse_mode: 'HTML' });
       return;
     }
 
@@ -340,12 +350,12 @@ Respond with JSON only:
     if (subcommand === 'history') {
       const key = parts[1];
       if (!key || !promptManager.isValidKey(key)) {
-        await ctx.reply(`Invalid key. Use /prompt list to see available keys.`);
+        await replyAndLog(ctx, `Invalid key. Use /prompt list to see available keys.`);
         return;
       }
       const history = promptManager.getHistory(key as PromptKey, 5);
       if (history.length === 0) {
-        await ctx.reply(`No modification history for <code>${key}</code>.`, { parse_mode: 'HTML' });
+        await replyAndLog(ctx, `No modification history for <code>${key}</code>.`, { parse_mode: 'HTML' });
         return;
       }
       let msg = `<b>Prompt History: ${key}</b>\n\n`;
@@ -354,11 +364,11 @@ Respond with JSON only:
         const agoStr = ago < 60 ? `${ago}min ago` : `${Math.floor(ago / 60)}h ago`;
         msg += `${i + 1}. ${agoStr} — ${h.change_description ?? 'no description'}\n`;
       });
-      await ctx.reply(msg, { parse_mode: 'HTML' });
+      await replyAndLog(ctx, msg, { parse_mode: 'HTML' });
       return;
     }
 
-    await ctx.reply(`Unknown subcommand. Use /prompt list, view, edit, reset, or history.`);
+    await replyAndLog(ctx, `Unknown subcommand. Use /prompt list, view, edit, reset, or history.`);
   });
 
   // === /scalp — Scalp 포지션 & 상태 ===
@@ -366,7 +376,7 @@ Respond with JSON only:
   bot.command('scalp', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!scalpRef) {
-      await ctx.reply('Scalp strategy not active.');
+      await replyAndLog(ctx, 'Scalp strategy not active.');
       return;
     }
 
@@ -384,7 +394,7 @@ Respond with JSON only:
     msg += `Trades: ${perf.totalTrades} (W:${perf.winningTrades} L:${perf.losingTrades}) ${winRate}%\n`;
     msg += `\n${positions}`;
 
-    await ctx.reply(msg, { parse_mode: 'HTML' });
+    await replyAndLog(ctx, msg, { parse_mode: 'HTML' });
   });
 
   // === /scalpclose <symbol> — Scalp 포지션 강제 청산 ===
@@ -392,18 +402,18 @@ Respond with JSON only:
   bot.command('scalpclose', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!scalpRef) {
-      await ctx.reply('Scalp strategy not active.');
+      await replyAndLog(ctx, 'Scalp strategy not active.');
       return;
     }
 
     const symbol = ctx.message?.text?.replace(/^\/scalpclose\s*/, '').trim().toUpperCase();
     if (!symbol) {
-      await ctx.reply('Usage: /scalpclose &lt;symbol&gt;\nExample: /scalpclose ETH-PERP', { parse_mode: 'HTML' });
+      await replyAndLog(ctx, 'Usage: /scalpclose &lt;symbol&gt;\nExample: /scalpclose ETH-PERP', { parse_mode: 'HTML' });
       return;
     }
 
     const result = await scalpRef.handleClosePosition(symbol);
-    await ctx.reply(result, { parse_mode: 'HTML' });
+    await replyAndLog(ctx, result, { parse_mode: 'HTML' });
   });
 
   // === /scoredump — 실시간 스코어 진단 ===
@@ -411,7 +421,7 @@ Respond with JSON only:
   bot.command('scoredump', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!brainRef) {
-      await ctx.reply('Brain not active.');
+      await replyAndLog(ctx, 'Brain not active.');
       return;
     }
 
@@ -419,7 +429,7 @@ Respond with JSON only:
     const scores = state.latestScores;
 
     if (!scores || scores.length === 0) {
-      await ctx.reply('No score data yet. Wait for next scan cycle.');
+      await replyAndLog(ctx, 'No score data yet. Wait for next scan cycle.');
       return;
     }
 
@@ -484,7 +494,7 @@ Respond with JSON only:
       }>;
 
       if (lifecycles.length === 0) {
-        await ctx.reply('No trade history yet.');
+        await replyAndLog(ctx, 'No trade history yet.');
         return;
       }
 
@@ -564,7 +574,7 @@ Respond with JSON only:
       await sendLongMessage(ctx, msg);
     } catch (err) {
       log.error({ err }, '/journal command failed');
-      await ctx.reply('Failed to fetch trade journal.');
+      await replyAndLog(ctx, 'Failed to fetch trade journal.');
     }
   });
 
@@ -573,16 +583,16 @@ Respond with JSON only:
   bot.command('report', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
     if (!reporterRef) {
-      await ctx.reply('Daily reporter not active.');
+      await replyAndLog(ctx, 'Daily reporter not active.');
       return;
     }
-    await ctx.reply('Generating report...');
+    await replyAndLog(ctx, 'Generating report...');
     try {
       const msg = await reporterRef.generateOnDemand();
       await sendLongMessage(ctx, msg);
     } catch (err) {
       log.error({ err }, '/report command failed');
-      await ctx.reply('Failed to generate report.');
+      await replyAndLog(ctx, 'Failed to generate report.');
     }
   });
 
@@ -590,7 +600,7 @@ Respond with JSON only:
 
   bot.command('help', async (ctx: Context) => {
     if (!isAuthorized(ctx)) return;
-    await ctx.reply(
+    await replyAndLog(ctx,
       '<b>pangjibot Commands</b>\n\n'
       + '<b>General</b>\n'
       + '/balance - Account balance &amp; positions\n'
@@ -623,12 +633,12 @@ Respond with JSON only:
     if (pendingEdit && (text === 'Y' || text === 'y' || text.toLowerCase() === 'yes')) {
       if (Date.now() > pendingEdit.expiresAt) {
         pendingEdit = null;
-        await ctx.reply('Edit expired (5min timeout). Run /prompt edit again.');
+        await replyAndLog(ctx, 'Edit expired (5min timeout). Run /prompt edit again.');
         return;
       }
 
       promptManager.set(pendingEdit.key, pendingEdit.newText, pendingEdit.summary);
-      await ctx.reply(`Prompt <code>${pendingEdit.key}</code> updated successfully.`, { parse_mode: 'HTML' });
+      await replyAndLog(ctx, `Prompt <code>${pendingEdit.key}</code> updated successfully.`, { parse_mode: 'HTML' });
       pendingEdit = null;
       return;
     }
@@ -672,7 +682,24 @@ function isAuthorized(ctx: Context): boolean {
   return chatId === config.tgChatId;
 }
 
+function logIncoming(ctx: Context, command?: string): void {
+  const text = ctx.message?.text ?? '';
+  const chatId = ctx.chat?.id?.toString();
+  const msgId = ctx.message?.message_id;
+  saveTelegramMessage('incoming', text, chatId, msgId, command);
+}
+
+function logOutgoing(text: string, chatId?: string, messageId?: number): void {
+  saveTelegramMessage('outgoing', text, chatId, messageId);
+}
+
+async function replyAndLog(ctx: Context, text: string, opts?: { parse_mode?: string }): Promise<void> {
+  logOutgoing(text, ctx.chat?.id?.toString());
+  await ctx.reply(text, opts as Parameters<Context['reply']>[1]);
+}
+
 async function sendLongMessage(ctx: Context, text: string): Promise<void> {
+  logOutgoing(text, ctx.chat?.id?.toString());
   const maxLen = 4000;
   if (text.length <= maxLen) {
     await ctx.reply(text, { parse_mode: 'HTML' });
@@ -698,6 +725,7 @@ async function sendLongMessage(ctx: Context, text: string): Promise<void> {
 
 export async function sendAlert(message: string): Promise<void> {
   if (!bot || !config.tgChatId) return;
+  logOutgoing(message, config.tgChatId);
   try {
     if (message.length > 4000) {
       const chunks = splitMessage(message);
