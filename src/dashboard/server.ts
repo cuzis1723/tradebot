@@ -469,6 +469,22 @@ function apiSignalAccuracy(req: IncomingMessage, res: ServerResponse): void {
   }
 }
 
+function apiJournal(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  const limit = Math.min(200, parseInt(url.searchParams.get('limit') ?? '50', 10));
+  const status = url.searchParams.get('status') ?? 'all';
+
+  const db = getDb();
+  let rows;
+  if (status && status !== 'all') {
+    rows = db.prepare('SELECT * FROM position_lifecycle WHERE status = ? ORDER BY opened_at DESC LIMIT ?').all(status, limit);
+  } else {
+    rows = db.prepare('SELECT * FROM position_lifecycle ORDER BY opened_at DESC LIMIT ?').all(limit);
+  }
+
+  json(res, rows);
+}
+
 // === Router ===
 
 const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void> = {
@@ -493,6 +509,7 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   '/api/lessons': apiLessons,
   '/api/narratives': apiNarratives,
   '/api/signal-accuracy': apiSignalAccuracy,
+  '/api/journal': apiJournal,
 };
 
 /** CRIT-9: Validate API key for /api/* routes if DASHBOARD_API_KEY is set */

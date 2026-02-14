@@ -169,6 +169,20 @@ export class SkillPipeline {
     const promptKey = mode === 'scalp' ? 'decide_scalp_trade' as const : 'decide_trade' as const;
     const result = await decideTrade(this.advisor, decisionCtx, targetSnapshot, promptKey);
 
+    // Assemble entry context on proposal (preserved through critique/scenario pipeline)
+    if (result.action === 'propose_trade' && result.proposal) {
+      result.proposal.entryContext = [
+        `[Regime: ${contextResult.data.regime}, Direction: ${contextResult.data.direction}, Risk: ${contextResult.data.riskLevel}]`,
+        `[Signal] ${signalResult.summary}`,
+        `[External] ${externalResult.summary}`,
+        `[Narrative] ${narrativeResult.summary}`,
+        confluenceResult.hasSignal ? `[Confluence] ${confluenceResult.summary}` : '',
+        orderflowResult.hasSignal ? `[Orderflow] ${orderflowResult.summary}` : '',
+        `[Rationale] ${result.proposal.rationale}`,
+        `[Confidence: ${result.proposal.confidence}, Score: ${triggerScore.totalScore}]`,
+      ].filter(Boolean).join('\n');
+    }
+
     // Phase 4: Scenario planning (only for high confidence swing proposals, skip for scalp)
     let scenarioAnalysis: ScenarioAnalysis | null = null;
     if (mode !== 'scalp' && result.action === 'propose_trade' && result.proposal) {
@@ -189,8 +203,8 @@ export class SkillPipeline {
       }
     }
 
-    // Phase 5: Critique (only if trade proposed)
-    if (result.action === 'propose_trade' && result.proposal) {
+    // Phase 5: Critique (only swing trades, skip for scalp — speed + reduce conservative rejection)
+    if (mode !== 'scalp' && result.action === 'propose_trade' && result.proposal) {
       log.info({ symbol: triggerScore.symbol }, 'Skill pipeline: running critique on proposal');
       const critique = await critiqueTrade(this.advisor, decisionCtx, result.proposal, targetSnapshot);
       if (critique) {

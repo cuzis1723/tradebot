@@ -17,9 +17,9 @@ const configSchema = z.object({
   tgChatId: z.string().optional(),
 
   // Capital allocation % (applied to actual account balance)
-  discretionaryCapitalPct: z.coerce.number().min(0).max(100).default(35),
-  scalpCapitalPct: z.coerce.number().min(0).max(100).default(20),
-  momentumCapitalPct: z.coerce.number().min(0).max(100).default(25),
+  discretionaryCapitalPct: z.coerce.number().min(0).max(100).default(30),
+  scalpCapitalPct: z.coerce.number().min(0).max(100).default(30),
+  momentumCapitalPct: z.coerce.number().min(0).max(100).default(20),
   equityCrossCapitalPct: z.coerce.number().min(0).max(100).default(10),
   cashBufferPct: z.coerce.number().min(0).max(100).default(10),
 

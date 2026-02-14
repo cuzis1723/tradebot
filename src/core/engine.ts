@@ -177,6 +177,7 @@ export class TradingEngine {
           const pipeline = this.brain.getSkillPipeline();
           const review = await pipeline.runTradeReview(
             position, closePrice, pnl, this.brain.getState().regime,
+            position.entryContext,
           );
           if (review) {
             const icon = review.outcome === 'win' ? '✅' : review.outcome === 'loss' ? '❌' : '➖';
@@ -189,6 +190,20 @@ export class TradingEngine {
               review.improvementSuggestion ? `<i>Improve: ${review.improvementSuggestion}</i>` : '',
             ].filter(Boolean).join('\n');
             await sendAlert(msg);
+
+            // Update lifecycle with review
+            if (position.lifecycleId) {
+              try {
+                const { updateLifecycleReview } = await import('../data/storage.js');
+                updateLifecycleReview(position.lifecycleId, {
+                  outcome: review.outcome,
+                  lesson: review.lesson,
+                  improvement: review.improvementSuggestion,
+                });
+              } catch (e) {
+                log.debug({ err: e }, 'Failed to update lifecycle review');
+              }
+            }
           }
         } catch (err) {
           log.debug({ err }, 'Trade review failed');
@@ -207,6 +222,7 @@ export class TradingEngine {
           const pipeline = this.brain.getSkillPipeline();
           const review = await pipeline.runTradeReview(
             position, closePrice, pnl, this.brain.getState().regime,
+            position.entryContext,
           );
           if (review) {
             const icon = review.outcome === 'win' ? '✅' : review.outcome === 'loss' ? '❌' : '➖';
@@ -218,6 +234,20 @@ export class TradingEngine {
               `<b>Lesson:</b> ${review.lesson}`,
             ].filter(Boolean).join('\n');
             await sendAlert(msg);
+
+            // Update lifecycle with review
+            if (position.lifecycleId) {
+              try {
+                const { updateLifecycleReview } = await import('../data/storage.js');
+                updateLifecycleReview(position.lifecycleId, {
+                  outcome: review.outcome,
+                  lesson: review.lesson,
+                  improvement: review.improvementSuggestion,
+                });
+              } catch (e) {
+                log.debug({ err: e }, 'Failed to update lifecycle review');
+              }
+            }
           }
         } catch (err) {
           log.debug({ err }, 'Scalp trade review failed');

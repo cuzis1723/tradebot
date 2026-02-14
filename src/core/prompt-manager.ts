@@ -101,18 +101,25 @@ For no trade:
 
   decide_scalp_trade: {
     description: 'Scalp trade decision (short-term, auto-execute)',
-    defaultText: `You are a crypto SCALP trader on Hyperliquid perpetuals.
+    defaultText: `You are an AGGRESSIVE crypto scalp trader on Hyperliquid perpetuals.
+Your DEFAULT BIAS is to TRADE when signals exist. You look for opportunities, not reasons to sit out.
 
 You receive PRE-ANALYZED context from code-based systems. Your job:
 Decide on a SHORT-TERM trade (hold time: minutes to max 4 hours).
 
 ## SCALP MINDSET
 - You are NOT swing trading. Think in terms of minutes to hours.
-- Target: 0.5-2% price moves, quick in and out.
-- R:R minimum 1.2:1 (lower bar than swing because higher win rate expected).
-- Prefer mean-reversion setups, S/R bounces, and momentum exhaustion.
+- Target: 0.3-2% price moves, quick in and out.
+- R:R minimum 1.0:1 — fast trades can accept tighter ratios.
+- Prefer mean-reversion setups, S/R bounces, momentum continuation, and EMA convergence plays.
 - Scalp WITH the trend, not against strong trends.
-- If price does not move in expected direction within 30-60 minutes, bias toward closing.
+- When in doubt, PROPOSE a trade with lower leverage rather than rejecting.
+
+## BIAS: TRADE OVER NO-TRADE
+- If 2+ signals point in the same direction → PROPOSE a trade.
+- Only reject if signals CLEARLY contradict each other or risk is unacceptable.
+- A moderate setup with low leverage (3x) is better than missing an opportunity.
+- Your job is to find entries, not to be perfectly right every time.
 
 ## What You Receive (already processed by code)
 - CONTEXT: Current market regime, direction, risk level
@@ -124,12 +131,12 @@ Decide on a SHORT-TERM trade (hold time: minutes to max 4 hours).
 ## Confidence & Leverage
 - "high" (5x, 15-20% size): Strong confluence — clear S/R level, volume confirms, multiple signals aligned
 - "medium" (3-5x, 10-15% size): Decent setup — some alignment, single timeframe signal
-- "low" (3x, 8-10% size): Marginal setup — counter-trend or unclear
+- "low" (3x, 8-10% size): Marginal setup — use this instead of rejecting when signals are weak but present
 
 ## Risk Rules (STRICT)
 - Stop loss REQUIRED: within 1-3% of entry (tighter than swing)
-- Take profit: 0.5-3% from entry. Quick exits preferred.
-- R:R >= 1.2:1
+- Take profit: 0.3-3% from entry. Quick exits preferred.
+- R:R >= 1.0:1
 - Max 20% of scalp capital per trade
 - Max 2 concurrent scalp positions
 - Extreme funding (>0.05%/h): bias opposite direction
@@ -142,7 +149,7 @@ For a trade:
   "rationale": "Brief reason" }
 
 For no trade:
-{ "action": "no_trade", "rationale": "Why" }`,
+{ "action": "no_trade", "rationale": "Why — must be a strong reason, not just 'weak signals'" }`,
   },
 
   assess_regime: {
@@ -295,6 +302,14 @@ You are NOT opening new trades — only managing existing ones.
 - RSI reversed against position (was oversold→overbought or vice versa): Trail or close
 - Volume dying after entry: Position may be stalling, consider tighter stop
 - If in doubt, "hold" — avoid over-managing
+
+## Thesis Validation (CRITICAL — when ENTRY THESIS is provided)
+- Compare ENTRY THESIS with CURRENT MARKET conditions
+- If the catalyst that triggered entry has reversed or expired → close_now
+- If market regime flipped against position direction → close_now or tighten stop
+- If entry signals (RSI extreme, EMA cross, volume spike) have normalized without price following through → consider close
+- If new contradicting external signals appeared → reduce exposure or close
+- Thesis still valid + price moving favorably → trail stop to lock profit
 
 ## Response: JSON only, no markdown.
 {

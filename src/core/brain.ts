@@ -11,6 +11,7 @@ import type {
   MarketState,
   BrainConfig,
   ActiveDiscretionaryPosition,
+  TriggerScore,
 } from './types.js';
 import type { PositionManagementAction } from './skills/types.js';
 
@@ -197,6 +198,31 @@ export class Brain extends EventEmitter {
   /** Get info sources for Telegram commands */
   getInfoSources(): InfoSourceAggregator {
     return this.infoSources;
+  }
+
+  /** Get latest scores from most recent urgent scan */
+  getLatestScores(): TriggerScore[] {
+    return this.state.latestScores ?? [];
+  }
+
+  /** Get scalp scorer instance for Telegram commands */
+  getScalpScorer(): MarketScorer {
+    return this.scalpScorer;
+  }
+
+  /** Get urgent scorer instance (alias of getScorer) for Telegram commands */
+  getUrgentScorer(): MarketScorer {
+    return this.scorer;
+  }
+
+  /** Get today's scalp trigger count */
+  getScalpTriggerCount(): number {
+    return this.scalpTriggerCount;
+  }
+
+  /** Get brain config for Telegram commands */
+  getBrainConfig(): Readonly<BrainConfig> {
+    return this.config;
   }
 
   // ========== DYNAMIC SYMBOL RESOLUTION ==========
@@ -588,13 +614,23 @@ export class Brain extends EventEmitter {
 
     log.debug('Running scalp scan...');
 
-    // Reuse latest snapshots from urgent scan (avoid duplicate API calls)
-    const snapshots = this.state.latestSnapshots;
-    if (snapshots.length === 0) return;
+    // Use latest snapshots if fresh (< 3min), otherwise fetch independently
+    let snapshots = this.state.latestSnapshots;
+    const snapshotAge = Date.now() - (this.state.lastUrgentScanAt || 0);
+    if (snapshots.length === 0 || snapshotAge > 3 * 60 * 1000) {
+      try {
+        const symbols = await this.resolveSymbols();
+        snapshots = await this.analyzer.analyzeMultiple(symbols);
+        if (snapshots.length === 0) return;
+      } catch (err) {
+        log.debug({ err }, 'Scalp scan: failed to fetch independent snapshots');
+        return;
+      }
+    }
 
     // Score with scalp scorer (lower thresholds)
     const infoFlags = this.infoSources.getLastSignals()?.triggerFlags ?? [];
-    const scores = this.scalpScorer.scoreAll(snapshots, infoFlags);
+    const scores = this.scalpScorer.scoreAll(snapshots, infoFlags, true);  // scalpMode=true for lower thresholds
 
     for (const score of scores) {
       const action = this.scalpScorer.getAction(score);

@@ -238,6 +238,41 @@ function initSchema(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_prompt_history_key ON prompt_history(key);
     CREATE INDEX IF NOT EXISTS idx_prompt_history_timestamp ON prompt_history(timestamp);
+
+    CREATE TABLE IF NOT EXISTS position_lifecycle (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      strategy_id TEXT NOT NULL,
+      proposal_uuid TEXT,
+      symbol TEXT NOT NULL,
+      side TEXT NOT NULL,
+      entry_price REAL NOT NULL,
+      entry_size REAL NOT NULL,
+      leverage INTEGER DEFAULT 3,
+      stop_loss REAL,
+      take_profit REAL,
+      entry_rationale TEXT,
+      confidence TEXT,
+      trigger_score INTEGER,
+      regime TEXT,
+      close_price REAL,
+      close_reason TEXT,
+      pnl REAL,
+      pnl_pct REAL,
+      held_minutes INTEGER,
+      review_outcome TEXT,
+      review_lesson TEXT,
+      review_improvement TEXT,
+      management_actions TEXT,
+      opened_at INTEGER NOT NULL,
+      closed_at INTEGER,
+      status TEXT DEFAULT 'open',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lifecycle_status ON position_lifecycle(status);
+    CREATE INDEX IF NOT EXISTS idx_lifecycle_symbol ON position_lifecycle(symbol);
+    CREATE INDEX IF NOT EXISTS idx_lifecycle_opened ON position_lifecycle(opened_at);
+    CREATE INDEX IF NOT EXISTS idx_lifecycle_strategy ON position_lifecycle(strategy_id);
   `);
 }
 
@@ -624,6 +659,99 @@ export function getRecentNarratives(hoursBack: number = 2): Array<{
     WHERE timestamp > ?
     ORDER BY timestamp DESC
   `).all(since) as Array<{ source: string; name: string; value: number; detail: string | null; timestamp: number }>;
+}
+
+// ============================================================
+// Position Lifecycle
+// ============================================================
+
+export function openPositionLifecycle(data: {
+  strategyId: string;
+  proposalUuid?: string;
+  symbol: string;
+  side: string;
+  entryPrice: number;
+  entrySize: number;
+  leverage: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  entryRationale?: string;
+  confidence?: string;
+  triggerScore?: number;
+  regime?: string;
+}): number {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO position_lifecycle (strategy_id, proposal_uuid, symbol, side, entry_price, entry_size, leverage, stop_loss, take_profit, entry_rationale, confidence, trigger_score, regime, opened_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    data.strategyId, data.proposalUuid ?? null, data.symbol, data.side,
+    data.entryPrice, data.entrySize, data.leverage,
+    data.stopLoss ?? null, data.takeProfit ?? null,
+    data.entryRationale ?? null, data.confidence ?? null,
+    data.triggerScore ?? null, data.regime ?? null, Date.now(),
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function closePositionLifecycle(id: number, data: {
+  closePrice: number;
+  closeReason: string;
+  pnl: number;
+  pnlPct: number;
+  heldMinutes: number;
+}): void {
+  const database = getDb();
+  database.prepare(`
+    UPDATE position_lifecycle
+    SET close_price = ?, close_reason = ?, pnl = ?, pnl_pct = ?, held_minutes = ?,
+        closed_at = ?, status = 'closed'
+    WHERE id = ?
+  `).run(data.closePrice, data.closeReason, data.pnl, data.pnlPct, data.heldMinutes, Date.now(), id);
+}
+
+export function addManagementAction(id: number, action: {
+  time: number;
+  action: string;
+  detail: string;
+}): void {
+  const database = getDb();
+  const row = database.prepare('SELECT management_actions FROM position_lifecycle WHERE id = ?').get(id) as { management_actions: string | null } | undefined;
+  const actions = row?.management_actions ? JSON.parse(row.management_actions) : [];
+  actions.push(action);
+  database.prepare('UPDATE position_lifecycle SET management_actions = ? WHERE id = ?').run(JSON.stringify(actions), id);
+}
+
+export function updateLifecycleReview(id: number, data: {
+  outcome: string;
+  lesson: string;
+  improvement?: string;
+}): void {
+  const database = getDb();
+  database.prepare(`
+    UPDATE position_lifecycle
+    SET review_outcome = ?, review_lesson = ?, review_improvement = ?
+    WHERE id = ?
+  `).run(data.outcome, data.lesson, data.improvement ?? null, id);
+}
+
+export function getRecentLifecycles(limit = 50, status?: string): unknown[] {
+  const database = getDb();
+  if (status && status !== 'all') {
+    return database.prepare(
+      'SELECT * FROM position_lifecycle WHERE status = ? ORDER BY opened_at DESC LIMIT ?'
+    ).all(status, limit);
+  }
+  return database.prepare(
+    'SELECT * FROM position_lifecycle ORDER BY opened_at DESC LIMIT ?'
+  ).all(limit);
+}
+
+export function getOpenLifecycles(): unknown[] {
+  const database = getDb();
+  return database.prepare(
+    'SELECT * FROM position_lifecycle WHERE status = \'open\' ORDER BY opened_at DESC'
+  ).all();
 }
 
 // ============================================================

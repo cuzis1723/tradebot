@@ -91,7 +91,8 @@ export async function decideTrade(
       promptKey === 'decide_scalp_trade' ? 'skill_scalp_decide' : 'skill_decide',
     );
 
-    return parseTradeResponse(response);
+    const isScalp = promptKey === 'decide_scalp_trade';
+    return parseTradeResponse(response, isScalp);
   } catch (err) {
     log.error({ err }, 'decideTrade LLM call failed');
     return { action: 'no_trade', content: `LLM error: ${String(err)}` };
@@ -446,16 +447,16 @@ export async function managePosition(
     `SL: $${position.stopLoss} | TP: $${position.takeProfit}`,
     `Unrealized PnL: $${unrealizedPnl.toFixed(2)} (${currentR.toFixed(2)}R)`,
     `Held: ${holdMinutes}min`,
-    entryContext ? `\n=== ENTRY REASONING ===\n${entryContext}` : '',
+    entryContext ? `\n=== ENTRY THESIS (at open) ===\n${entryContext}` : '',
     ``,
-    `=== MARKET CONDITIONS ===`,
+    `=== CURRENT MARKET ===`,
     `Regime: ${regime} | Direction: ${direction}`,
     `RSI: ${currentSnapshot.rsi14.toFixed(1)} | Trend: ${currentSnapshot.trend}`,
     `EMA9: ${currentSnapshot.ema9.toFixed(2)} | EMA21: ${currentSnapshot.ema21.toFixed(2)}`,
     `ATR: ${currentSnapshot.atr14.toFixed(2)}`,
     currentSnapshot.volumeRatio !== undefined ? `Volume Ratio: ${currentSnapshot.volumeRatio.toFixed(2)}x` : '',
     ``,
-    `MANAGE: Evaluate if the original thesis still holds. JSON only.`,
+    `MANAGE: Compare entry thesis vs current conditions. Is the original thesis still valid? JSON only.`,
   ].filter(Boolean).join('\n');
 
   try {
@@ -613,7 +614,7 @@ export function buildEnhancedPromptSections(decision: DecisionContext): string[]
 // Response Parsing
 // ============================================================
 
-function parseTradeResponse(response: string): { action: string; proposal?: TradeProposal; content?: string } {
+function parseTradeResponse(response: string, isScalp = false): { action: string; proposal?: TradeProposal; content?: string } {
   try {
     let jsonStr = response;
     const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -644,16 +645,16 @@ function parseTradeResponse(response: string): { action: string; proposal?: Trad
         log.warn({ symbol: data.symbol, originalSl: sl, clampedSl, leverage, slPct: slPct.toFixed(2), maxSlPct }, 'SL clamped to match leverage rules');
       }
 
-      // Validate R:R >= 1.5
+      // Validate R:R minimum (1.0:1 for scalp, 1.5:1 for swing)
+      const minRR = isScalp ? 1.0 : 1.5;
       const slDist = Math.abs(entryPrice - clampedSl);
       const tpDist = Math.abs(tp - entryPrice);
       const rr = slDist > 0 ? tpDist / slDist : 0;
-      // If R:R < 1.5, adjust TP to meet minimum
       let clampedTp = tp;
-      if (rr < 1.5 && slDist > 0) {
+      if (rr < minRR && slDist > 0) {
         const tpDir = tp > entryPrice ? 1 : -1;
-        clampedTp = entryPrice + tpDir * slDist * 1.5;
-        log.warn({ symbol: data.symbol, originalTp: tp, clampedTp, rr: rr.toFixed(2) }, 'TP adjusted for min 1.5:1 R:R');
+        clampedTp = entryPrice + tpDir * slDist * minRR;
+        log.warn({ symbol: data.symbol, originalTp: tp, clampedTp, rr: rr.toFixed(2), minRR }, 'TP adjusted for min R:R');
       }
 
       const proposal: TradeProposal = {

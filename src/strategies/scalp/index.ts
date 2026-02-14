@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Strategy } from '../base.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
-import { logTrade, saveStrategyState, loadStrategyState } from '../../data/storage.js';
+import { logTrade, saveStrategyState, loadStrategyState, openPositionLifecycle, closePositionLifecycle, addManagementAction } from '../../data/storage.js';
 import type {
   StrategyTier,
   TradingMode,
@@ -270,9 +270,30 @@ export class ScalpStrategy extends Strategy {
         openedAt: Date.now(),
         slOrderId,
         tpOrderId,
+        entryContext: proposal.entryContext,
       };
       this.positions.push(position);
       this.persistPositions();
+
+      // Track lifecycle
+      try {
+        position.lifecycleId = openPositionLifecycle({
+          strategyId: this.id,
+          proposalUuid: proposal.id,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          entryPrice: position.entryPrice,
+          entrySize: sz,
+          leverage: proposal.leverage,
+          stopLoss: proposal.stopLoss,
+          takeProfit: proposal.takeProfit,
+          entryRationale: proposal.entryContext,
+          confidence: proposal.confidence,
+        });
+        this.persistPositions();
+      } catch (e) {
+        this.log.debug({ err: e }, 'Failed to open lifecycle record');
+      }
 
       logTrade(this.id, proposal.symbol, proposal.side, proposal.entryPrice, sz, 0, 0, result.orderId?.toString());
 
@@ -320,6 +341,17 @@ export class ScalpStrategy extends Strategy {
           position.stopLoss = newSl;
           if (slResult.orderId) position.slOrderId = slResult.orderId;
           this.persistPositions();
+          if (position.lifecycleId) {
+            try {
+              addManagementAction(position.lifecycleId, {
+                time: Date.now(),
+                action: action.action,
+                detail: `SL updated to ${newSl.toFixed(2)}`,
+              });
+            } catch (e) {
+              this.log.debug({ err: e }, 'Failed to log management action');
+            }
+          }
           return `Scalp SL updated: ${position.symbol} new SL @ $${newSl.toFixed(2)} (${action.reasoning})`;
         } catch (err) {
           this.log.error({ err }, 'Failed to update scalp SL');
@@ -343,6 +375,17 @@ export class ScalpStrategy extends Strategy {
           const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
           const pnl = (closePrice - position.entryPrice) * closeSize * (position.side === 'buy' ? 1 : -1);
           logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, closeSize, 0, pnl);
+          if (position.lifecycleId) {
+            try {
+              addManagementAction(position.lifecycleId, {
+                time: Date.now(),
+                action: action.action,
+                detail: `Partial close ${closePct}% at $${closePrice.toFixed(2)}, PnL: $${pnl.toFixed(2)}`,
+              });
+            } catch (e) {
+              this.log.debug({ err: e }, 'Failed to log management action');
+            }
+          }
           return `Scalp partial close ${closePct}%: ${position.symbol} @ $${closePrice.toFixed(2)} PnL: $${pnl.toFixed(2)}`;
         } catch (err) {
           this.log.error({ err }, 'Failed to partial close scalp');
@@ -350,7 +393,18 @@ export class ScalpStrategy extends Strategy {
         }
       }
       case 'close_now': {
-        const msg = await this.closePosition(position);
+        if (position.lifecycleId) {
+          try {
+            addManagementAction(position.lifecycleId, {
+              time: Date.now(),
+              action: action.action,
+              detail: `Close requested: ${action.reasoning}`,
+            });
+          } catch (e) {
+            this.log.debug({ err: e }, 'Failed to log management action');
+          }
+        }
+        const msg = await this.closePosition(position, action.reasoning || 'brain_close');
         return `${msg} (Reason: ${action.reasoning})`;
       }
       default:
@@ -364,7 +418,7 @@ export class ScalpStrategy extends Strategy {
     return await this.closePosition(position);
   }
 
-  private async closePosition(position: ActiveDiscretionaryPosition): Promise<string> {
+  private async closePosition(position: ActiveDiscretionaryPosition, reason = 'manual'): Promise<string> {
     const hl = getHyperliquidClient();
 
     try {
@@ -393,6 +447,22 @@ export class ScalpStrategy extends Strategy {
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
       this.persistPositions();
+
+      if (position.lifecycleId) {
+        try {
+          const heldMin = Math.floor((Date.now() - position.openedAt) / 60_000);
+          const pnlPct = position.entryPrice > 0 ? (pnl / (position.entryPrice * position.size)) * 100 : 0;
+          closePositionLifecycle(position.lifecycleId, {
+            closePrice,
+            closeReason: reason,
+            pnl,
+            pnlPct,
+            heldMinutes: heldMin,
+          });
+        } catch (e) {
+          this.log.debug({ err: e }, 'Failed to close lifecycle record');
+        }
+      }
 
       logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, position.size, 0, pnl);
       this.recordTrade(new Decimal(pnl));
@@ -431,7 +501,7 @@ export class ScalpStrategy extends Strategy {
       if (heldMs > this.config.maxHoldTimeMs) {
         const heldMin = Math.floor(heldMs / 60_000);
         this.log.warn({ symbol: position.symbol, heldMin }, 'Scalp max hold time exceeded, force-closing');
-        const result = await this.closePosition(position);
+        const result = await this.closePosition(position, 'max_hold_time');
         if (this.onMessage) {
           this.onMessage(`⏰ <b>Scalp Max Hold Time</b>\n${result}`).catch(() => {});
         }
@@ -441,7 +511,7 @@ export class ScalpStrategy extends Strategy {
 
   private async closeAllPositions(): Promise<void> {
     for (const position of [...this.positions]) {
-      await this.closePosition(position);
+      await this.closePosition(position, 'strategy_stop');
     }
   }
 

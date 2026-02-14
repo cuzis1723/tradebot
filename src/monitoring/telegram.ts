@@ -8,6 +8,7 @@ import type { Brain } from '../core/brain.js';
 import type { DailyReporter } from '../core/daily-report.js';
 import type { TradeProposal, MarketSnapshot } from '../core/types.js';
 import { promptManager, type PromptKey } from '../core/prompt-manager.js';
+import { getRecentLifecycles } from '../data/storage.js';
 
 const log = createChildLogger('telegram');
 
@@ -405,6 +406,168 @@ Respond with JSON only:
     await ctx.reply(result, { parse_mode: 'HTML' });
   });
 
+  // === /scoredump — 실시간 스코어 진단 ===
+
+  bot.command('scoredump', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+    if (!brainRef) {
+      await ctx.reply('Brain not active.');
+      return;
+    }
+
+    const state = brainRef.getState();
+    const scores = state.latestScores;
+
+    if (!scores || scores.length === 0) {
+      await ctx.reply('No score data yet. Wait for next scan cycle.');
+      return;
+    }
+
+    const urgentScorer = brainRef.getUrgentScorer();
+    const scalpScorer = brainRef.getScalpScorer();
+    const brainConfig = brainRef.getBrainConfig();
+    const urgentThreshold = urgentScorer.getConfig().llmThreshold;
+    const scalpThreshold = scalpScorer.getConfig().llmThreshold;
+
+    const ago = state.lastUrgentScanAt > 0
+      ? `${Math.floor((Date.now() - state.lastUrgentScanAt) / 60_000)}min ago`
+      : 'never';
+
+    let msg = `<b>Score Dump</b> (scanned ${ago})\n`;
+    msg += `━━━━━━━━━━━━━━━━━\n`;
+
+    const sorted = [...scores].sort((a, b) => b.totalScore - a.totalScore);
+
+    for (const s of sorted) {
+      const snapshot = state.latestSnapshots.find(ss => ss.symbol === s.symbol);
+      const change1h = snapshot ? `${snapshot.change1h >= 0 ? '+' : ''}${snapshot.change1h.toFixed(1)}%` : '?';
+      const rsi = snapshot ? `${snapshot.rsi14.toFixed(0)}` : '?';
+
+      // Check if score exceeds urgent or scalp threshold
+      const urgentTrigger = s.totalScore >= urgentThreshold;
+      const scalpTrigger = s.totalScore >= scalpThreshold && !urgentTrigger;
+      const triggerIcon = urgentTrigger ? ' ⚡' : (scalpTrigger ? ' ⚡' : '');
+
+      msg += `<b>${s.symbol}</b>: ${s.totalScore}/${urgentThreshold}${triggerIcon} [1h:${change1h}, RSI:${rsi}]\n`;
+
+      if (s.flags.length > 0) {
+        const flagSummary = s.flags.map(f => `${f.name}(+${f.score})`).join(', ');
+        msg += `  Flags: ${flagSummary}\n`;
+      }
+    }
+
+    msg += `━━━━━━━━━━━━━━━━━\n`;
+    msg += `Urgent: ${state.urgentTriggerCount}/${brainConfig.maxDailyUrgentLLM} LLM calls today\n`;
+    msg += `Scalp: ${brainRef.getScalpTriggerCount()}/${brainConfig.maxDailyScalpLLM} LLM calls today`;
+
+    await sendLongMessage(ctx, msg);
+  });
+
+  // === /journal — 트레이드 저널 (position_lifecycle) ===
+
+  bot.command('journal', async (ctx: Context) => {
+    if (!isAuthorized(ctx)) return;
+
+    const args = ctx.message?.text?.replace(/^\/journal\s*/, '').trim();
+    const limit = args && !isNaN(Number(args)) ? Math.min(Number(args), 50) : 10;
+
+    try {
+      const lifecycles = getRecentLifecycles(limit) as Array<{
+        id: number; strategy_id: string; symbol: string; side: string;
+        entry_price: number; entry_size: number; leverage: number;
+        stop_loss: number | null; take_profit: number | null;
+        entry_rationale: string | null; confidence: string | null;
+        close_price: number | null; close_reason: string | null;
+        pnl: number | null; pnl_pct: number | null; held_minutes: number | null;
+        review_lesson: string | null; status: string;
+        opened_at: number; closed_at: number | null;
+      }>;
+
+      if (lifecycles.length === 0) {
+        await ctx.reply('No trade history yet.');
+        return;
+      }
+
+      let msg = `<b>Trade Journal</b> (last ${limit})\n`;
+      msg += `━━━━━━━━━━━━━━━━━\n`;
+
+      let wins = 0;
+      let losses = 0;
+      let totalPnlPct = 0;
+      let closedCount = 0;
+
+      for (const lc of lifecycles) {
+        const stratLabel = lc.strategy_id.includes('scalp') ? 'scalp' : 'disc';
+
+        if (lc.status === 'open') {
+          // Open position
+          msg += `\n🟡 <b>${lc.symbol}</b> ${lc.side.toUpperCase()} (${stratLabel}) ${lc.leverage}x  ← OPEN\n`;
+          msg += `  $${lc.entry_price.toFixed(2)}`;
+          if (lc.stop_loss) msg += ` | SL: $${lc.stop_loss.toFixed(2)}`;
+          if (lc.take_profit) msg += ` | TP: $${lc.take_profit.toFixed(2)}`;
+          msg += '\n';
+          if (lc.entry_rationale) {
+            const rationale = lc.entry_rationale.length > 80
+              ? lc.entry_rationale.substring(0, 77) + '...'
+              : lc.entry_rationale;
+            msg += `  ${rationale}\n`;
+          }
+        } else {
+          // Closed position
+          const pnl = lc.pnl ?? 0;
+          const pnlPct = lc.pnl_pct ?? 0;
+          const won = pnl >= 0;
+          if (won) wins++; else losses++;
+          closedCount++;
+          totalPnlPct += pnlPct;
+
+          const icon = won ? '✅' : '❌';
+          const pnlStr = pnl >= 0
+            ? `+$${pnl.toFixed(2)} (+${pnlPct.toFixed(1)}%)`
+            : `-$${Math.abs(pnl).toFixed(2)} (${pnlPct.toFixed(1)}%)`;
+
+          // Format held time
+          let heldStr = '';
+          if (lc.held_minutes != null) {
+            if (lc.held_minutes < 60) {
+              heldStr = `${lc.held_minutes}min`;
+            } else {
+              const hrs = Math.floor(lc.held_minutes / 60);
+              const mins = lc.held_minutes % 60;
+              heldStr = mins > 0 ? `${hrs}h${mins}m` : `${hrs}h`;
+            }
+          }
+
+          msg += `\n${icon} <b>${lc.symbol}</b> ${lc.side.toUpperCase()} (${stratLabel}) ${lc.leverage}x\n`;
+          msg += `  $${lc.entry_price.toFixed(2)} → $${(lc.close_price ?? 0).toFixed(2)} | ${pnlStr}`;
+          if (heldStr) msg += ` | ${heldStr}`;
+          msg += '\n';
+
+          // Show lesson or rationale
+          const note = lc.review_lesson ?? lc.entry_rationale;
+          if (note) {
+            const trimmed = note.length > 80 ? note.substring(0, 77) + '...' : note;
+            msg += `  ${trimmed}\n`;
+          }
+        }
+      }
+
+      msg += `\n━━━━━━━━━━━━━━━━━\n`;
+      if (closedCount > 0) {
+        const winRate = ((wins / closedCount) * 100).toFixed(0);
+        const avgPnl = (totalPnlPct / closedCount).toFixed(1);
+        msg += `Win Rate: ${winRate}% (${wins}W/${losses}L) | Avg PnL: ${Number(avgPnl) >= 0 ? '+' : ''}${avgPnl}%`;
+      } else {
+        msg += `No closed trades yet.`;
+      }
+
+      await sendLongMessage(ctx, msg);
+    } catch (err) {
+      log.error({ err }, '/journal command failed');
+      await ctx.reply('Failed to fetch trade journal.');
+    }
+  });
+
   // === /report — On-demand 리포트 생성 ===
 
   bot.command('report', async (ctx: Context) => {
@@ -433,6 +596,8 @@ Respond with JSON only:
       + '/balance - Account balance &amp; positions\n'
       + '/status - Latest LLM analysis result\n'
       + '/score - Latest scorer metrics\n'
+      + '/scoredump - Real-time score diagnostic (compact)\n'
+      + '/journal [N] - Trade journal (last N trades)\n'
       + '/do &lt;command&gt; - Talk to LLM (trade, ask, transfer, etc)\n'
       + '/prompt - Manage LLM system prompts\n'
       + '/report - Generate on-demand report\n'

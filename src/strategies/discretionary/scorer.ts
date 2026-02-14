@@ -29,7 +29,8 @@ export class MarketScorer {
   }
 
   // Score a single symbol based on its snapshot
-  scoreSymbol(snapshot: MarketSnapshot, prevSnapshot?: MarketSnapshot, allSnapshots?: MarketSnapshot[]): TriggerScore {
+  // scalpMode: enables additional lower-threshold indicators for scalp trading
+  scoreSymbol(snapshot: MarketSnapshot, prevSnapshot?: MarketSnapshot, allSnapshots?: MarketSnapshot[], scalpMode = false): TriggerScore {
     const flags: TriggerFlag[] = [];
 
     // --- PRICE CATEGORY ---
@@ -219,6 +220,86 @@ export class MarketScorer {
       }
     }
 
+    // --- SCALP-ONLY INDICATORS (lower thresholds for more frequent triggers) ---
+    if (scalpMode) {
+      // Moderate 1h price move: 1.0-2.5% → +2
+      if (Math.abs(snapshot.change1h) > 1.0 && Math.abs(snapshot.change1h) <= 2.5) {
+        flags.push({
+          name: '1h_price_moderate',
+          category: 'price',
+          score: 2,
+          direction: snapshot.change1h > 0 ? 'long' : 'short',
+          detail: `1h moderate move: ${snapshot.change1h.toFixed(2)}%`,
+        });
+      }
+
+      // Moderate RSI: 30-35 (leaning oversold) or 65-75 (leaning overbought) → +2
+      if (snapshot.rsi14 >= 25 && snapshot.rsi14 < 35) {
+        flags.push({
+          name: 'rsi_moderate_oversold',
+          category: 'momentum',
+          score: 2,
+          direction: 'long',
+          detail: `RSI(14): ${snapshot.rsi14.toFixed(1)} (moderate oversold)`,
+        });
+      } else if (snapshot.rsi14 > 65 && snapshot.rsi14 <= 75) {
+        flags.push({
+          name: 'rsi_moderate_overbought',
+          category: 'momentum',
+          score: 2,
+          direction: 'short',
+          detail: `RSI(14): ${snapshot.rsi14.toFixed(1)} (moderate overbought)`,
+        });
+      }
+
+      // Wider S/R proximity: 0.5-1.5% → +1
+      const dSupport = ((snapshot.price - snapshot.support) / snapshot.price) * 100;
+      const dResistance = ((snapshot.resistance - snapshot.price) / snapshot.price) * 100;
+      if (dSupport >= 0.5 && dSupport < 1.5) {
+        flags.push({
+          name: 'approaching_support',
+          category: 'structure',
+          score: 1,
+          direction: 'long',
+          detail: `Approaching support ($${snapshot.support.toFixed(2)}), distance: ${dSupport.toFixed(2)}%`,
+        });
+      }
+      if (dResistance >= 0.5 && dResistance < 1.5) {
+        flags.push({
+          name: 'approaching_resistance',
+          category: 'structure',
+          score: 1,
+          direction: 'short',
+          detail: `Approaching resistance ($${snapshot.resistance.toFixed(2)}), distance: ${dResistance.toFixed(2)}%`,
+        });
+      }
+
+      // Moderate volume: 1.5-3x → +1
+      if (snapshot.volumeRatio !== undefined && snapshot.volumeRatio > 1.5 && snapshot.volumeRatio <= 3) {
+        flags.push({
+          name: 'volume_moderate',
+          category: 'volume',
+          score: 1,
+          direction: 'neutral',
+          detail: `Volume elevated: ${snapshot.volumeRatio.toFixed(2)}x avg hourly`,
+        });
+      }
+
+      // EMA convergence (cross imminent): |EMA9-EMA21|/price < 0.2% → +1
+      if (snapshot.ema9 > 0 && snapshot.ema21 > 0) {
+        const emaDist = Math.abs(snapshot.ema9 - snapshot.ema21) / snapshot.price;
+        if (emaDist < 0.002) {
+          flags.push({
+            name: 'ema_convergence',
+            category: 'momentum',
+            score: 1,
+            direction: snapshot.ema9 > snapshot.ema21 ? 'long' : 'short',
+            detail: `EMA convergence: ${(emaDist * 100).toFixed(3)}% gap (cross imminent)`,
+          });
+        }
+      }
+    }
+
     // --- Calculate direction bias ---
     let longScore = 0;
     let shortScore = 0;
@@ -262,12 +343,13 @@ export class MarketScorer {
 
   // Score all symbols, return those above alertThreshold
   // infoFlags are merged into the relevant symbol's score
-  scoreAll(snapshots: MarketSnapshot[], infoFlags?: InfoTriggerFlag[]): TriggerScore[] {
+  // scalpMode: enables lower-threshold indicators for scalp trading
+  scoreAll(snapshots: MarketSnapshot[], infoFlags?: InfoTriggerFlag[], scalpMode = false): TriggerScore[] {
     const scores: TriggerScore[] = [];
 
     for (const snapshot of snapshots) {
       const prev = this.previousSnapshots.get(snapshot.symbol);
-      const score = this.scoreSymbol(snapshot, prev, snapshots);
+      const score = this.scoreSymbol(snapshot, prev, snapshots, scalpMode);
 
       // Merge info source flags for this symbol
       if (infoFlags && infoFlags.length > 0) {

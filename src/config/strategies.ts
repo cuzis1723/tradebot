@@ -23,13 +23,13 @@ export const defaultMomentumConfig: MomentumConfig = {
   rsiOverbought: 70,
   rsiOversold: 30,
   atrPeriod: 14,
-  capitalUsd: 250,
+  capitalUsd: 200,
   leverage: 3,
 };
 
 export const defaultDiscretionaryConfig: DiscretionaryConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  capitalUsd: 350,  // Reduced from 550 to make room for scalp
+  capitalUsd: 300,  // Reduced from 550 to balance with scalp
   leverage: 5,
   analysisIntervalMs: 5 * 60 * 1000, // 5 minutes (kept for proposal timeout reference)
   proposalTimeoutMs: 5 * 60 * 1000, // 5 minutes
@@ -38,7 +38,7 @@ export const defaultDiscretionaryConfig: DiscretionaryConfig = {
 
 export const defaultScalpConfig: ScalpConfig = {
   symbols: ['BTC-PERP', 'ETH-PERP', 'SOL-PERP'],
-  capitalUsd: 200,
+  capitalUsd: 300,
   leverage: 5,
   maxConcurrentPositions: 2,
   maxHoldTimeMs: 4 * 60 * 60 * 1000, // 4 hours hard max
@@ -89,14 +89,14 @@ export const defaultBrainConfig: BrainConfig = {
   },
   // Scalp: faster scan, lower thresholds, shorter cooldowns
   scalpScanIntervalMs: 2 * 60 * 1000,         // 2 min
-  maxDailyScalpLLM: 24,                        // 24 scalp LLM calls/day
+  maxDailyScalpLLM: 36,                        // 36 scalp LLM calls/day
   scalpScorer: {
     scanIntervalMs: 2 * 60 * 1000,             // 2 min
-    llmThreshold: 6,                            // lower bar for scalps (vs 8)
-    alertThreshold: 4,
-    symbolCooldownMs: 20 * 60 * 1000,           // 20 min (vs 2h)
-    globalCooldownMs: 10 * 60 * 1000,           // 10 min (vs 30min)
-    maxDailyCalls: 24,                           // more frequent (vs 12)
+    llmThreshold: 4,                            // lower bar for scalps (vs 8)
+    alertThreshold: 3,
+    symbolCooldownMs: 10 * 60 * 1000,           // 10 min (vs 2h)
+    globalCooldownMs: 5 * 60 * 1000,            // 5 min (vs 30min)
+    maxDailyCalls: 36,                           // more frequent (vs 12)
     lossCooldownMs: 60 * 60 * 1000,              // 1h (vs 4h)
     maxConsecutiveLosses: 3,                     // more tolerant (vs 2)
   },

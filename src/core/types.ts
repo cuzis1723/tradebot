@@ -233,6 +233,7 @@ export interface TradeProposal {
   status: 'pending' | 'approved' | 'modified' | 'rejected' | 'expired' | 'executed';
   createdAt: number;
   expiresAt: number;
+  entryContext?: string;  // skill pipeline에서 조립한 진입 컨텍스트 (시그널, 외부 인텔, rationale, 레짐)
 }
 
 export interface ActiveDiscretionaryPosition {
@@ -247,6 +248,8 @@ export interface ActiveDiscretionaryPosition {
   openedAt: number;
   slOrderId?: number;
   tpOrderId?: number;
+  entryContext?: string;  // 진입 당시 컨텍스트 요약 (시그널, 외부 인텔, rationale, 레짐)
+  lifecycleId?: number;
 }
 
 // === Trigger Score Types (v2) ===

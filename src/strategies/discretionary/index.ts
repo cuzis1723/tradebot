@@ -1,7 +1,7 @@
 import { Decimal } from 'decimal.js';
 import { Strategy } from '../base.js';
 import { getHyperliquidClient } from '../../exchanges/hyperliquid/client.js';
-import { logTrade, saveStrategyState, loadStrategyState } from '../../data/storage.js';
+import { logTrade, saveStrategyState, loadStrategyState, openPositionLifecycle, closePositionLifecycle, addManagementAction } from '../../data/storage.js';
 import type {
   StrategyTier,
   TradingMode,
@@ -191,6 +191,17 @@ export class DiscretionaryStrategy extends Strategy {
           position.stopLoss = newSl;
           if (slResult.orderId) position.slOrderId = slResult.orderId;
           this.persistPositions();
+          if (position.lifecycleId) {
+            try {
+              addManagementAction(position.lifecycleId, {
+                time: Date.now(),
+                action: action.action,
+                detail: `SL updated to ${newSl.toFixed(2)}`,
+              });
+            } catch (e) {
+              this.log.debug({ err: e }, 'Failed to log management action');
+            }
+          }
           return `SL updated: ${position.symbol} new SL @ $${newSl.toFixed(2)} (${action.reasoning})`;
         } catch (err) {
           this.log.error({ err }, 'Failed to update SL');
@@ -214,6 +225,17 @@ export class DiscretionaryStrategy extends Strategy {
           const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
           const pnl = (closePrice - position.entryPrice) * closeSize * (position.side === 'buy' ? 1 : -1);
           logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, closeSize, 0, pnl);
+          if (position.lifecycleId) {
+            try {
+              addManagementAction(position.lifecycleId, {
+                time: Date.now(),
+                action: action.action,
+                detail: `Partial close ${closePct}% at $${closePrice.toFixed(2)}, PnL: $${pnl.toFixed(2)}`,
+              });
+            } catch (e) {
+              this.log.debug({ err: e }, 'Failed to log management action');
+            }
+          }
           return `Partial close ${closePct}%: ${position.symbol} closed ${closeSize.toFixed(4)} @ $${closePrice.toFixed(2)} PnL: $${pnl.toFixed(2)} (${action.reasoning})`;
         } catch (err) {
           this.log.error({ err }, 'Failed to partial close');
@@ -221,6 +243,17 @@ export class DiscretionaryStrategy extends Strategy {
         }
       }
       case 'close_now': {
+        if (position.lifecycleId) {
+          try {
+            addManagementAction(position.lifecycleId, {
+              time: Date.now(),
+              action: action.action,
+              detail: `Close requested: ${action.reasoning}`,
+            });
+          } catch (e) {
+            this.log.debug({ err: e }, 'Failed to log management action');
+          }
+        }
         const msg = await this.closePosition(position);
         return `${msg} (Reason: ${action.reasoning})`;
       }
@@ -298,7 +331,7 @@ export class DiscretionaryStrategy extends Strategy {
         this.log.warn({ triggerErr, symbol: proposal.symbol }, 'Failed to place SL/TP trigger orders');
       }
 
-      const position = {
+      const position: ActiveDiscretionaryPosition = {
         symbol: proposal.symbol,
         side: proposal.side,
         entryPrice: result.filled ? parseFloat(result.avgPrice!) : proposal.entryPrice,
@@ -310,9 +343,30 @@ export class DiscretionaryStrategy extends Strategy {
         openedAt: Date.now(),
         slOrderId,
         tpOrderId,
+        entryContext: proposal.entryContext,
       };
       this.positions.push(position);
       this.persistPositions();
+
+      // Track lifecycle
+      try {
+        position.lifecycleId = openPositionLifecycle({
+          strategyId: this.id,
+          proposalUuid: proposal.id,
+          symbol: proposal.symbol,
+          side: proposal.side,
+          entryPrice: position.entryPrice,
+          entrySize: sz,
+          leverage: proposal.leverage,
+          stopLoss: proposal.stopLoss,
+          takeProfit: proposal.takeProfit,
+          entryRationale: proposal.entryContext,
+          confidence: proposal.confidence,
+        });
+        this.persistPositions();
+      } catch (e) {
+        this.log.debug({ err: e }, 'Failed to open lifecycle record');
+      }
 
       proposal.status = 'executed';
 
@@ -365,6 +419,22 @@ export class DiscretionaryStrategy extends Strategy {
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
       this.persistPositions();
+
+      if (position.lifecycleId) {
+        try {
+          const heldMin = Math.floor((Date.now() - position.openedAt) / 60_000);
+          const pnlPct = position.entryPrice > 0 ? (pnl / (position.entryPrice * position.size)) * 100 : 0;
+          closePositionLifecycle(position.lifecycleId, {
+            closePrice,
+            closeReason: 'manual',
+            pnl,
+            pnlPct,
+            heldMinutes: heldMin,
+          });
+        } catch (e) {
+          this.log.debug({ err: e }, 'Failed to close lifecycle record');
+        }
+      }
 
       logTrade(this.id, position.symbol, position.side === 'buy' ? 'sell' : 'buy', closePrice, position.size, 0, pnl);
       this.recordTrade(new Decimal(pnl));
