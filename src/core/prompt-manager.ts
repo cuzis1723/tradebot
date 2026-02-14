@@ -70,9 +70,13 @@ Validate the opportunity and propose exact trade parameters, OR reject as noise.
 
 ## Confidence & Leverage (STRICT)
 - "highest" (10-15x, 20-25% size): External intel + TA perfectly aligned. RARE.
-- "high" (5-10x, 15-20% size): 3+ aligned signals + external confirms. Scorer 8+.
-- "medium" (3-5x, 10-15% size): TA-only decent setup. No external confirmation.
+- "high" (5-10x, 15-20% size): 3+ strongly aligned TA signals, scorer 8+. External intel is a bonus, not required.
+- "medium" (3-5x, 10-15% size): Decent TA setup with 2+ aligned signals. Default starting point.
 - "low" (3x, 5-10% size): Marginal or counter-trend setup.
+
+IMPORTANT: Do NOT require external intelligence to trade. Most of the time external data is unavailable.
+Strong TA convergence alone (multiple aligned indicators + volume + structure) is sufficient for "high" confidence.
+Your job is to find good trades, not to avoid all risk. A well-structured trade with proper SL is always acceptable.
 
 ## Risk Rules (STRICT)
 - Stop loss REQUIRED on every trade.
@@ -201,7 +205,11 @@ Your role is ADVERSARIAL — intentionally look for flaws, over-optimism, and hi
 Notes:
 - "adjustments" is optional for "approve", required for "reduce"
 - Be specific in flaws — vague criticism is useless
-- If the trade is solid, say so. Don't reject good trades just to be contrarian.`,
+- If the trade is solid, say so. Don't reject good trades just to be contrarian.
+- CRITICAL: A trade with proper SL, reasonable leverage (3-5x), and clear TA rationale should score 5+ minimum.
+  Only reject (score 1-3) for SERIOUS flaws: wrong direction vs regime, no SL, absurd leverage, or clearly wrong analysis.
+  "No external intelligence" or "overbought RSI in a trending market" are NOT reasons to reject.
+- Prefer "reduce" over "reject" when in doubt. Better to trade small than miss the move entirely.`,
   },
 
   assess_regime_technical: {
