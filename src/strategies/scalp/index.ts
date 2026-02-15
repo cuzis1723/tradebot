@@ -378,6 +378,10 @@ export class ScalpStrategy extends Strategy {
             orderType: 'market',
             reduceOnly: true,
           });
+          if (result.error) {
+            this.log.error({ symbol: position.symbol, error: result.error }, 'Scalp partial close order failed');
+            return `Scalp partial close failed: ${result.error}`;
+          }
           position.size -= closeSize;
           this.persistPositions();
           const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;

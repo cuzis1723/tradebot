@@ -221,6 +221,10 @@ export class DiscretionaryStrategy extends Strategy {
             orderType: 'market',
             reduceOnly: true,
           });
+          if (result.error) {
+            this.log.error({ symbol: position.symbol, error: result.error }, 'Partial close order failed');
+            return `Partial close failed: ${result.error}`;
+          }
           position.size -= closeSize;
           this.persistPositions();
           const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
