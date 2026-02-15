@@ -165,6 +165,22 @@ export class DiscretionaryStrategy extends Strategy {
 
   // === Position Management (from Brain's managePosition skill) ===
 
+  /** Get actual exchange position size for a symbol. Returns 0 if no position found. */
+  private async getExchangePositionSize(symbol: string): Promise<number> {
+    const hl = getHyperliquidClient();
+    try {
+      const positions = await hl.getPositions();
+      const coin = symbol.replace('-PERP', '');
+      const pos = positions.find(
+        p => p.position.coin === coin || p.position.coin === symbol,
+      );
+      return pos ? Math.abs(parseFloat(pos.position.szi)) : 0;
+    } catch (err) {
+      this.log.warn({ err, symbol }, 'Failed to verify exchange position');
+      return -1; // -1 = unknown, proceed cautiously
+    }
+  }
+
   async handlePositionManagement(action: PositionManagementAction): Promise<string> {
     const position = this.positions.find(p => p.symbol === action.symbol);
     if (!position) return `No position found for ${action.symbol}`;
@@ -177,13 +193,22 @@ export class DiscretionaryStrategy extends Strategy {
         const newSl = action.action === 'move_to_breakeven' ? position.entryPrice : action.newStopLoss;
         if (!newSl) return 'No new SL price provided';
 
+        // Verify exchange position exists before updating SL
+        const actualSize = await this.getExchangePositionSize(position.symbol);
+        if (actualSize === 0) {
+          this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+          this.persistPositions();
+          return `SL update skipped: ${position.symbol} position no longer exists on exchange (likely closed by SL/TP trigger)`;
+        }
+
         // Cancel old SL, place new one
+        const effectiveSize = actualSize > 0 ? Math.min(position.size, actualSize) : position.size;
         try {
           if (position.slOrderId) await hl.cancelOrder(position.symbol, position.slOrderId).catch(() => {});
           const slResult = await hl.placeTriggerOrder({
             coin: position.symbol,
             isBuy: position.side !== 'buy',
-            size: position.size.toString(),
+            size: effectiveSize.toString(),
             triggerPx: newSl.toString(),
             tpsl: 'sl',
             reduceOnly: true,
@@ -210,8 +235,20 @@ export class DiscretionaryStrategy extends Strategy {
       }
       case 'partial_close': {
         const closePct = action.partialClosePct ?? 50;
-        const closeSize = position.size * (closePct / 100);
         const closeSzDecimals = await hl.getSzDecimals(position.symbol);
+
+        // Verify exchange position before attempting reduce-only close
+        const pcActualSize = await this.getExchangePositionSize(position.symbol);
+        if (pcActualSize === 0) {
+          this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+          this.persistPositions();
+          return `Partial close skipped: ${position.symbol} position no longer exists on exchange (likely closed by SL/TP trigger)`;
+        }
+
+        // Use actual exchange size to prevent "would increase position" error
+        const pcEffectiveSize = pcActualSize > 0 ? Math.min(position.size, pcActualSize) : position.size;
+        const closeSize = pcEffectiveSize * (closePct / 100);
+
         try {
           const result = await hl.placeOrder({
             coin: position.symbol,
@@ -412,10 +449,21 @@ export class DiscretionaryStrategy extends Strategy {
         this.log.debug({ cancelErr, symbol: position.symbol }, 'Failed to cancel trigger orders (may already be filled)');
       }
 
+      // Verify actual exchange position to avoid "reduce only would increase" errors
+      const actualSize = await this.getExchangePositionSize(position.symbol);
+      if (actualSize === 0) {
+        this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+        this.persistPositions();
+        this.log.info({ symbol: position.symbol }, 'Position already closed on exchange');
+        return `Position already closed on exchange: ${position.symbol}`;
+      }
+
+      const closeQty = actualSize > 0 ? Math.min(position.size, actualSize) : position.size;
+
       const result = await hl.placeOrder({
         coin: position.symbol,
         isBuy: position.side === 'sell',
-        size: position.size.toString(),
+        size: closeQty.toString(),
         price: '0',
         orderType: 'market',
         reduceOnly: true,
@@ -426,7 +474,7 @@ export class DiscretionaryStrategy extends Strategy {
       }
 
       const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
-      const pnl = (closePrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
+      const pnl = (closePrice - position.entryPrice) * closeQty * (position.side === 'buy' ? 1 : -1);
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
       this.persistPositions();

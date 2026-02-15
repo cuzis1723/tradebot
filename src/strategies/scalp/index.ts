@@ -323,6 +323,30 @@ export class ScalpStrategy extends Strategy {
 
   // === Position Management ===
 
+  /** Get actual exchange position size for a symbol. Returns 0 if no position found. */
+  private async getExchangePositionSize(symbol: string): Promise<number> {
+    const hl = getHyperliquidClient();
+    try {
+      const positions = await hl.getPositions();
+      const coin = symbol.replace('-PERP', '');
+      const pos = positions.find(
+        p => p.position.coin === coin || p.position.coin === symbol,
+      );
+      return pos ? Math.abs(parseFloat(pos.position.szi)) : 0;
+    } catch (err) {
+      this.log.warn({ err, symbol }, 'Failed to verify exchange position');
+      return -1; // -1 = unknown, proceed cautiously
+    }
+  }
+
+  /** Remove a position from local state when it no longer exists on exchange */
+  private removeStalePosition(position: ActiveDiscretionaryPosition, reason: string): void {
+    this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+    this.closeRetryCount.delete(position.proposalId);
+    this.persistPositions();
+    this.log.warn({ symbol: position.symbol, reason }, 'Removed stale scalp position');
+  }
+
   async handlePositionManagement(action: PositionManagementAction): Promise<string> {
     const position = this.positions.find(p => p.symbol === action.symbol);
     if (!position) return `No scalp position found for ${action.symbol}`;
@@ -335,12 +359,21 @@ export class ScalpStrategy extends Strategy {
         const newSl = action.action === 'move_to_breakeven' ? position.entryPrice : action.newStopLoss;
         if (!newSl) return 'No new SL price provided';
 
+        // Verify exchange position exists before updating SL
+        const actualSize = await this.getExchangePositionSize(position.symbol);
+        if (actualSize === 0) {
+          this.removeStalePosition(position, 'no exchange position for SL update');
+          return `Scalp SL update skipped: ${position.symbol} position no longer exists on exchange (likely closed by SL/TP trigger)`;
+        }
+
         try {
+          // Use actual exchange size for trigger order to avoid size mismatch
+          const effectiveSize = actualSize > 0 ? Math.min(position.size, actualSize) : position.size;
           if (position.slOrderId) await hl.cancelOrder(position.symbol, position.slOrderId).catch(() => {});
           const slResult = await hl.placeTriggerOrder({
             coin: position.symbol,
             isBuy: position.side !== 'buy',
-            size: position.size.toString(),
+            size: effectiveSize.toString(),
             triggerPx: newSl.toString(),
             tpsl: 'sl',
             reduceOnly: true,
@@ -367,8 +400,19 @@ export class ScalpStrategy extends Strategy {
       }
       case 'partial_close': {
         const closePct = action.partialClosePct ?? 50;
-        const closeSize = position.size * (closePct / 100);
         const closeSzDecimals = await hl.getSzDecimals(position.symbol);
+
+        // Verify exchange position before attempting reduce-only close
+        const actualSize = await this.getExchangePositionSize(position.symbol);
+        if (actualSize === 0) {
+          this.removeStalePosition(position, 'no exchange position for partial close');
+          return `Scalp partial close skipped: ${position.symbol} position no longer exists on exchange (likely closed by SL/TP trigger)`;
+        }
+
+        // Use actual exchange size to prevent "would increase position" error
+        const effectiveSize = actualSize > 0 ? Math.min(position.size, actualSize) : position.size;
+        const closeSize = effectiveSize * (closePct / 100);
+
         try {
           const result = await hl.placeOrder({
             coin: position.symbol,
@@ -441,10 +485,25 @@ export class ScalpStrategy extends Strategy {
         this.log.debug({ cancelErr, symbol: position.symbol }, 'Failed to cancel scalp trigger orders');
       }
 
+      // Verify actual exchange position to avoid "reduce only would increase" errors
+      const actualSize = await this.getExchangePositionSize(position.symbol);
+      if (actualSize === 0) {
+        // Position already closed on exchange (e.g., by SL/TP trigger) — clean up local state
+        this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
+        this.closeRetryCount.delete(position.proposalId);
+        this.persistPositions();
+        const held = Math.floor((Date.now() - position.openedAt) / 60_000);
+        this.log.info({ symbol: position.symbol, reason }, 'Scalp position already closed on exchange');
+        return `Scalp already closed on exchange: ${position.symbol} (held ${held}min, reason: ${reason})`;
+      }
+
+      // Use actual exchange size (may differ if partial fills occurred)
+      const closeQty = actualSize > 0 ? Math.min(position.size, actualSize) : position.size;
+
       const result = await hl.placeOrder({
         coin: position.symbol,
         isBuy: position.side === 'sell',
-        size: position.size.toString(),
+        size: closeQty.toString(),
         price: '0',
         orderType: 'market',
         reduceOnly: true,
@@ -455,7 +514,7 @@ export class ScalpStrategy extends Strategy {
       }
 
       const closePrice = result.avgPrice ? parseFloat(result.avgPrice) : 0;
-      const pnl = (closePrice - position.entryPrice) * position.size * (position.side === 'buy' ? 1 : -1);
+      const pnl = (closePrice - position.entryPrice) * closeQty * (position.side === 'buy' ? 1 : -1);
 
       this.positions = this.positions.filter(p => p.proposalId !== position.proposalId);
       this.closeRetryCount.delete(position.proposalId);
