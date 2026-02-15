@@ -18,6 +18,14 @@ const API_TIMEOUT_MS = 10_000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_RESET_MS = 30_000;
 
+/** Round a number to N significant figures (Hyperliquid requires max 5 sig figs for prices) */
+function roundToSigFigs(value: number, sigFigs: number): number {
+  if (value === 0) return 0;
+  const magnitude = Math.floor(Math.log10(Math.abs(value))) + 1;
+  const factor = Math.pow(10, sigFigs - magnitude);
+  return Math.round(value * factor) / factor;
+}
+
 export class HyperliquidClient {
   private sdk: Hyperliquid;
   private connected = false;
@@ -296,6 +304,9 @@ export class HyperliquidClient {
       }
     }
 
+    // Hyperliquid requires prices to have at most 5 significant figures
+    price = roundToSigFigs(price, 5);
+
     try {
       const response = await this.sdk.exchange.placeOrder({
         coin: params.coin,
@@ -369,6 +380,9 @@ export class HyperliquidClient {
   // ============================================================
 
   async placeTriggerOrder(params: HLTriggerOrderParams): Promise<{ orderId: number | null; error: string | null }> {
+    // Round trigger price to 5 significant figures (Hyperliquid requirement)
+    const roundedTriggerPx = roundToSigFigs(parseFloat(params.triggerPx), 5).toString();
+
     try {
       const response = await this.sdk.exchange.placeOrder({
         coin: params.coin,
@@ -377,7 +391,7 @@ export class HyperliquidClient {
         limit_px: 0,
         order_type: {
           trigger: {
-            triggerPx: params.triggerPx,
+            triggerPx: roundedTriggerPx,
             isMarket: true,
             tpsl: params.tpsl,
           },
@@ -426,7 +440,7 @@ export class HyperliquidClient {
         coin: params.coin,
         is_buy: params.isBuy,
         sz: parseFloat(params.size),
-        limit_px: parseFloat(params.price),
+        limit_px: roundToSigFigs(parseFloat(params.price), 5),
         order_type: { limit: { tif } },
         reduce_only: params.reduceOnly ?? false,
       });
