@@ -18,6 +18,23 @@ const API_TIMEOUT_MS = 10_000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_RESET_MS = 30_000;
 
+/**
+ * Round price to Hyperliquid's tick size rules:
+ * - Max 5 significant figures
+ * - Max (6 - szDecimals) decimal places for perps
+ * - Integer prices are always valid
+ * Mirrors Python SDK: round(float(f"{px:.5g}"), 6 - szDecimals)
+ */
+function roundPriceForHL(price: number, szDecimals: number): number {
+  if (price === 0) return 0;
+  // Step 1: Round to 5 significant figures
+  const sig5 = parseFloat(price.toPrecision(5));
+  // Step 2: Round to max allowed decimals (6 - szDecimals for perps)
+  const maxDecimals = Math.max(0, 6 - szDecimals);
+  const factor = Math.pow(10, maxDecimals);
+  return Math.round(sig5 * factor) / factor;
+}
+
 export class HyperliquidClient {
   private sdk: Hyperliquid;
   private connected = false;
@@ -296,6 +313,10 @@ export class HyperliquidClient {
       }
     }
 
+    // Round price to Hyperliquid tick size (5 sig figs, max 6-szDecimals decimals)
+    const szDec = await this.getSzDecimals(params.coin);
+    price = roundPriceForHL(price, szDec);
+
     try {
       const response = await this.sdk.exchange.placeOrder({
         coin: params.coin,
@@ -369,6 +390,10 @@ export class HyperliquidClient {
   // ============================================================
 
   async placeTriggerOrder(params: HLTriggerOrderParams): Promise<{ orderId: number | null; error: string | null }> {
+    // Round trigger price to Hyperliquid tick size
+    const szDec = await this.getSzDecimals(params.coin);
+    const roundedTriggerPx = String(roundPriceForHL(parseFloat(params.triggerPx), szDec));
+
     try {
       const response = await this.sdk.exchange.placeOrder({
         coin: params.coin,
@@ -377,7 +402,7 @@ export class HyperliquidClient {
         limit_px: 0,
         order_type: {
           trigger: {
-            triggerPx: params.triggerPx,
+            triggerPx: roundedTriggerPx,
             isMarket: true,
             tpsl: params.tpsl,
           },
